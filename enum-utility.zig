@@ -108,6 +108,7 @@ test "FlattenEnumUnion Demo 2" {
     try std.testing.expectEqualStrings("monster_goblin", @tagName(values[7]));
     try std.testing.expectEqualStrings("monster_ogre", @tagName(values[8]));
     try std.testing.expectEqualStrings("monster_dragon", @tagName(values[9]));
+    try std.testing.expectEqual(@as(usize, 10), values.len);
 }
 
 pub const CombineEnumOptions = struct { name_separator: []const u8 = "_" };
@@ -159,4 +160,5 @@ test "CombineEnums Demo 1" {
     try std.testing.expectEqualStrings("south_anticlockwise", @tagName(values[5]));
     try std.testing.expectEqualStrings("west_clockwise", @tagName(values[6]));
     try std.testing.expectEqualStrings("west_anticlockwise", @tagName(values[7]));
+    try std.testing.expectEqual(@as(usize, 8), values.len);
 }
