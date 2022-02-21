@@ -244,12 +244,6 @@ test "combineEnums" {
 /// castee.
 pub fn enumNameCast(comptime T: type, from: anytype) ?T {
     const FromType = @TypeOf(from);
-    comptime {
-        const isEnum = std.meta.trait.is(.Enum);
-        const isEnumLiteral = std.meta.trait.is(.EnumLiteral);
-        std.debug.assert(isEnum(T));
-        std.debug.assert(isEnum(FromType) or isEnumLiteral(FromType));
-    }
 
     if (FromType == @Type(.EnumLiteral)) {
         const tag_name = comptime @tagName(from);
