@@ -102,7 +102,7 @@ test "FlattenEnumUnion Demo 1" {
     try std.testing.expectEqualStrings("d_a_b_c", @tagName(values[1]));
     try std.testing.expectEqualStrings("c_d_a_b", @tagName(values[2]));
     try std.testing.expectEqualStrings("b_c_d_a", @tagName(values[3]));
-    try std.testing.expectEqual(@as(usize, 4), values.len);
+    try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Abcd)), values.len);
 }
 
 test "FlattenEnumUnion Demo 2" {
@@ -140,7 +140,7 @@ test "FlattenEnumUnion Demo 2" {
     try std.testing.expectEqualStrings("monster_goblin", @tagName(values[7]));
     try std.testing.expectEqualStrings("monster_ogre", @tagName(values[8]));
     try std.testing.expectEqualStrings("monster_dragon", @tagName(values[9]));
-    try std.testing.expectEqual(@as(usize, 10), values.len);
+    try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Entity)), values.len);
 }
 
 pub const CombineEnumOptions = struct { name_separator: []const u8 = "_" };
