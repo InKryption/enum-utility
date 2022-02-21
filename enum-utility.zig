@@ -143,7 +143,9 @@ test "FlattenEnumUnion Demo 2" {
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Entity)), values.len);
 }
 
-pub const CombineEnumOptions = struct { name_separator: []const u8 = "_" };
+pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
+    return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len;
+}
 
 pub fn CombineEnums(
     comptime A: type,
