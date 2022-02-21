@@ -82,7 +82,6 @@ fn FlattenEnumUnionImpl(
 
     const selected_tag_type = tag_type orelse
         std.meta.Int(.unsigned, if (new_fields.len == 0) 0 else (new_fields.len - 1));
-
     return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
         .layout = .Auto,
         .tag_type = selected_tag_type,
