@@ -216,7 +216,7 @@ test "CombinedEnums" {
     try std.testing.expectEqualStrings("south_anticlockwise", @tagName(values[5]));
     try std.testing.expectEqualStrings("west_clockwise", @tagName(values[6]));
     try std.testing.expectEqualStrings("west_anticlockwise", @tagName(values[7]));
-    try std.testing.expectEqual(@as(usize, 8), values.len);
+    try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Direction, Rotation)), values.len);
 
     const Fizz = enum { fizz };
     const Buzz = enum { buzz };
