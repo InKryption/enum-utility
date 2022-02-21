@@ -147,10 +147,12 @@ pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int 
     return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len;
 }
 
-pub fn CombineEnums(
+pub const CombinedEnumsOptions = FlattenedEnumUnionOptions;
+
+pub fn CombinedEnums(
     comptime A: type,
     comptime B: type,
-    comptime options: CombineEnumOptions,
+    comptime options: CombinedEnumsOptions,
 ) type {
     var union_fields: []const std.builtin.TypeInfo.UnionField = &.{};
 
@@ -169,10 +171,10 @@ pub fn CombineEnums(
         .decls = &.{},
     }));
 
-    return FlattenEnumUnion(NonFlatEnumUnion, .{ .name_separator = options.name_separator });
+    return FlattenEnumUnion(NonFlatEnumUnion, options);
 }
 
-pub fn combineEnums(a: anytype, b: anytype, comptime options: CombineEnumOptions) CombineEnums(@TypeOf(a), @TypeOf(b), options) {
+pub fn combineEnums(a: anytype, b: anytype, comptime options: CombinedEnumsOptions) CombinedEnums(@TypeOf(a), @TypeOf(b), options) {
     const values_a = comptime std.enums.values(@TypeOf(a));
     const values_b = comptime std.enums.values(@TypeOf(b));
 
@@ -182,7 +184,7 @@ pub fn combineEnums(a: anytype, b: anytype, comptime options: CombineEnumOptions
             inline for (values_b) |possible_b| {
                 if (possible_b == b) {
                     const field_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
-                    return @field(CombineEnums(@TypeOf(a), @TypeOf(b), options), field_name);
+                    return @field(CombinedEnums(@TypeOf(a), @TypeOf(b), options), field_name);
                 }
             }
             unreachable;
@@ -191,7 +193,7 @@ pub fn combineEnums(a: anytype, b: anytype, comptime options: CombineEnumOptions
     unreachable;
 }
 
-test "CombineEnums" {
+test "CombinedEnums" {
     const Rotation = enum {
         clockwise,
         anticlockwise,
@@ -202,8 +204,8 @@ test "CombineEnums" {
         south,
         west,
     };
-    const DirectionPlusRotation = CombineEnums(Direction, Rotation, .{});
-    try std.testing.expectEqual(DirectionPlusRotation, CombineEnums(Direction, Rotation, .{}));
+    const DirectionPlusRotation = CombinedEnums(Direction, Rotation, .{});
+    try std.testing.expectEqual(DirectionPlusRotation, CombinedEnums(Direction, Rotation, .{}));
 
     const values = std.enums.values(DirectionPlusRotation);
     try std.testing.expectEqualStrings("north_clockwise", @tagName(values[0]));
