@@ -158,6 +158,22 @@ pub fn CombinedEnums(
     comptime B: type,
     comptime options: CombinedEnumsOptions,
 ) type {
+    return CombinedEnumsImpl(
+        A,
+        B,
+        options.name_separator[0..options.name_separator.len].*,
+        options.tag_type,
+        options.is_exhaustive,
+    );
+}
+
+fn CombinedEnumsImpl(
+    comptime A: type,
+    comptime B: type,
+    comptime name_separator: anytype,
+    comptime tag_type: ?type,
+    comptime is_exhaustive: bool,
+) type {
     var union_fields: []const std.builtin.TypeInfo.UnionField = &.{};
 
     for (@as([]const std.builtin.TypeInfo.EnumField, @typeInfo(A).Enum.fields)) |field_info_a| {
@@ -175,7 +191,12 @@ pub fn CombinedEnums(
         .decls = &.{},
     }));
 
-    return FlattenEnumUnion(NonFlatEnumUnion, options);
+    return FlattenEnumUnionImpl(
+        NonFlatEnumUnion,
+        name_separator,
+        tag_type,
+        is_exhaustive,
+    );
 }
 
 pub fn combineEnums(a: anytype, b: anytype, comptime options: CombinedEnumsOptions) CombinedEnums(@TypeOf(a), @TypeOf(b), options) {
@@ -226,8 +247,7 @@ test "CombinedEnums" {
     const Buzz = enum { buzz };
 
     const FizzBuzz1 = CombinedEnums(Fizz, Buzz, .{});
-    const FizzBuzz2 = CombinedEnums(enum { fizz }, enum { buzz }, .{});
-    try std.testing.expect(FizzBuzz1 != FizzBuzz2);
+    try std.testing.expect(FizzBuzz1 != CombinedEnums(enum { fizz }, enum { buzz }, .{}));
     try std.testing.expectEqual(FizzBuzz1, CombinedEnums(Fizz, Buzz, .{}));
 }
 
