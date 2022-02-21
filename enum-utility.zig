@@ -1,6 +1,29 @@
 const std = @import("std");
 
-pub const FlattenedEnumUnionOptions = struct { name_separator: []const u8 = "_" };
+pub fn flattenedEnumUnionFieldCount(comptime EnumUnion: type) comptime_int {
+    comptime {
+        var field_num: comptime_int = 0;
+        for (@typeInfo(EnumUnion).Union.fields) |field_info| {
+            switch (@typeInfo(field_info.field_type)) {
+                .Void => field_num += 1,
+                .Enum => field_num += std.meta.fields(field_info.field_type).len,
+                .Union => field_num += flattenedEnumUnionFieldCount(field_info.field_type),
+                else => unreachable,
+            }
+        }
+        return field_num;
+    }
+}
+
+pub const FlattenedEnumUnionOptions = struct {
+    /// will be used to separate enum field names
+    name_separator: []const u8 = "_",
+    /// if null, flattened enum will take on the minimum necessary integer tag type
+    tag_type: ?type = null,
+    /// whether the resulting flattened enum should be exhaustive or not
+    is_exhaustive: bool = true,
+};
+
 pub fn FlattenEnumUnion(
     comptime EnumUnion: type,
     comptime options: FlattenedEnumUnionOptions,
