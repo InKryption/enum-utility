@@ -238,3 +238,32 @@ test "combineEnums" {
     try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnums(Foo.foo, Bar.bar, .{})));
     try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnums(Bar.bar, Foo.foo, .{})));
 }
+
+/// Attempts to cast an enum to another enum, by name. Returns null
+/// if the target type does not possess a name in common with the
+/// castee.
+pub fn enumNameCast(comptime T: type, from: anytype) ?T {
+    const FromType = @TypeOf(from);
+    comptime {
+        const isEnum = std.meta.trait.is(.Enum);
+        const isEnumLiteral = std.meta.trait.is(.EnumLiteral);
+        std.debug.assert(isEnum(T));
+        std.debug.assert(isEnum(FromType) or isEnumLiteral(FromType));
+    }
+
+    if (FromType == @Type(.EnumLiteral)) {
+        const tag_name = comptime @tagName(from);
+        if (!@hasField(T, tag_name)) return null;
+        return @field(T, tag_name);
+    }
+
+    inline for (comptime std.enums.values(FromType)) |possible_value| {
+        if (possible_value == from) {
+            const tag_name = @tagName(possible_value);
+            if (!@hasField(T, tag_name)) return null;
+            return @field(T, tag_name);
+        }
+    }
+
+    return null;
+}
