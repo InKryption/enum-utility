@@ -242,7 +242,7 @@ test "combineEnums" {
 /// Attempts to cast an enum to another enum, by name. Returns null
 /// if the target type does not possess a name in common with the
 /// castee.
-pub fn enumNameCast(comptime T: type, from: anytype) ?T {
+pub fn tagNameCast(comptime T: type, from: anytype) ?T {
     const FromType = @TypeOf(from);
 
     if (FromType == @Type(.EnumLiteral)) {
@@ -260,4 +260,24 @@ pub fn enumNameCast(comptime T: type, from: anytype) ?T {
     }
 
     return null;
+}
+
+test "tagNameCast" {
+    const A = enum(u1) { a = 0, b = 1 };
+    const B = enum(u1) { a = 1, b = 0 };
+    try std.testing.expectEqual(@as(?A, .a), tagNameCast(A, .a));
+    try std.testing.expectEqual(@as(?A, .a), tagNameCast(A, A.a));
+    try std.testing.expectEqual(@as(?A, .a), tagNameCast(A, B.a));
+
+    try std.testing.expectEqual(@as(?B, .a), tagNameCast(B, .a));
+    try std.testing.expectEqual(@as(?B, .a), tagNameCast(B, A.a));
+    try std.testing.expectEqual(@as(?B, .a), tagNameCast(B, B.a));
+
+    try std.testing.expectEqual(@as(?B, .b), tagNameCast(B, .b));
+    try std.testing.expectEqual(@as(?B, .b), tagNameCast(B, A.b));
+    try std.testing.expectEqual(@as(?B, .b), tagNameCast(B, B.b));
+
+    try std.testing.expectEqual(@as(?A, null), tagNameCast(A, .c));
+    try std.testing.expectEqual(@as(?B, null), tagNameCast(B, .d));
+    try std.testing.expectEqual(@as(?B, null), tagNameCast(B, enum { e }.e));
 }
