@@ -28,7 +28,12 @@ pub fn FlattenEnumUnion(
     comptime EnumUnion: type,
     comptime options: FlattenedEnumUnionOptions,
 ) type {
-    return FlattenEnumUnionImpl(EnumUnion, options.name_separator.len, options.name_separator[0..options.name_separator.len].*);
+    return FlattenEnumUnionImpl(
+        EnumUnion,
+        options.name_separator[0..options.name_separator.len].*,
+        options.tag_type,
+        options.is_exhaustive,
+    );
 }
 
 fn FlattenEnumUnionImpl(
