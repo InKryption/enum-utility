@@ -221,10 +221,10 @@ test "CombinedEnums" {
     const Fizz = enum { fizz };
     const Buzz = enum { buzz };
 
-    const FizzBuzz1 = CombineEnums(Fizz, Buzz, .{});
-    const FizzBuzz2 = CombineEnums(enum { fizz }, enum { buzz }, .{});
+    const FizzBuzz1 = CombinedEnums(Fizz, Buzz, .{});
+    const FizzBuzz2 = CombinedEnums(enum { fizz }, enum { buzz }, .{});
     try std.testing.expect(FizzBuzz1 != FizzBuzz2);
-    try std.testing.expectEqual(FizzBuzz1, CombineEnums(Fizz, Buzz, .{}));
+    try std.testing.expectEqual(FizzBuzz1, CombinedEnums(Fizz, Buzz, .{}));
 }
 
 test "combineEnums" {
