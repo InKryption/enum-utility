@@ -33,26 +33,33 @@ pub fn FlattenEnumUnion(
 
 fn FlattenEnumUnionImpl(
     comptime EnumUnion: type,
-    comptime name_separator_len: comptime_int,
-    comptime name_separator: [name_separator_len]u8,
+    comptime name_separator: anytype,
+    comptime tag_type: ?type,
+    comptime is_exhaustive: bool,
 ) type {
+    std.debug.assert(std.meta.trait.is(.Array)(@TypeOf(name_separator)));
+    std.debug.assert(std.meta.Child(@TypeOf(name_separator)) == u8);
+
     @setEvalBranchQuota(1000 + 1000 * std.meta.fields(EnumUnion).len);
     var new_fields: []const std.builtin.TypeInfo.EnumField = &.{};
 
-    var field_num: comptime_int = 0;
-    for (@as([]const std.builtin.TypeInfo.UnionField, @typeInfo(EnumUnion).Union.fields)) |field_info| {
+    for (@typeInfo(EnumUnion).Union.fields) |field_info| {
         switch (@typeInfo(field_info.field_type)) {
             .Void => {
                 new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
                     .name = field_info.name,
-                    .value = field_num,
+                    .value = new_fields.len,
                 }};
-                field_num += 1;
             },
             .Enum, .Union => {
                 const enum_fields: []const std.builtin.TypeInfo.EnumField = switch (@typeInfo(field_info.field_type)) {
                     .Enum => std.meta.fields(field_info.field_type),
-                    .Union => std.meta.fields(FlattenEnumUnionImpl(field_info.field_type, name_separator_len, name_separator)),
+                    .Union => std.meta.fields(FlattenEnumUnionImpl(
+                        field_info.field_type,
+                        name_separator,
+                        tag_type,
+                        is_exhaustive,
+                    )),
                     else => unreachable,
                 };
 
@@ -60,21 +67,23 @@ fn FlattenEnumUnionImpl(
                 for (enum_fields) |enum_field_info| {
                     new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
                         .name = field_info.name ++ name_separator ++ enum_field_info.name,
-                        .value = field_num,
+                        .value = new_fields.len,
                     }};
-                    field_num += 1;
                 }
             },
             else => unreachable,
         }
     }
 
+    const selected_tag_type = tag_type orelse
+        std.meta.Int(.unsigned, if (new_fields.len == 0) 0 else (new_fields.len - 1));
+
     return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
         .layout = .Auto,
-        .tag_type = std.meta.Int(.unsigned, new_fields.len),
+        .tag_type = selected_tag_type,
         .fields = new_fields,
         .decls = &.{},
-        .is_exhaustive = true,
+        .is_exhaustive = is_exhaustive,
     }));
 }
 
