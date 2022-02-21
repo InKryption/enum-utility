@@ -142,11 +142,13 @@ pub fn combineEnums(a: anytype, b: anytype, comptime options: CombineEnumOptions
     const values_a = comptime std.enums.values(@TypeOf(a));
     const values_b = comptime std.enums.values(@TypeOf(b));
 
+    @setEvalBranchQuota(10_000 + 1000 * values_a.len * values_b.len);
     inline for (values_a) |possible_a| {
         if (possible_a == a) {
             inline for (values_b) |possible_b| {
                 if (possible_b == b) {
-                    return @field(CombineEnums(@TypeOf(a), @TypeOf(b), options), @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b));
+                    const field_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
+                    return @field(CombineEnums(@TypeOf(a), @TypeOf(b), options), field_name);
                 }
             }
             unreachable;
@@ -180,7 +182,13 @@ test "CombineEnums" {
     try std.testing.expectEqualStrings("west_anticlockwise", @tagName(values[7]));
     try std.testing.expectEqual(@as(usize, 8), values.len);
 
-    try std.testing.expect(CombineEnums(enum { fizz }, enum { buzz }, .{}) != CombineEnums(enum { fizz }, enum { buzz }, .{}));
+    const Fizz = enum { fizz };
+    const Buzz = enum { buzz };
+
+    const FizzBuzz1 = CombineEnums(Fizz, Buzz, .{});
+    const FizzBuzz2 = CombineEnums(enum { fizz }, enum { buzz }, .{});
+    try std.testing.expect(FizzBuzz1 != FizzBuzz2);
+    try std.testing.expectEqual(FizzBuzz1, CombineEnums(Fizz, Buzz, .{}));
 }
 
 test "combineEnums" {
