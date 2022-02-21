@@ -112,6 +112,7 @@ test "FlattenEnumUnion Demo 2" {
 }
 
 pub const CombineEnumOptions = struct { name_separator: []const u8 = "_" };
+
 pub fn CombineEnums(
     comptime A: type,
     comptime B: type,
@@ -137,7 +138,24 @@ pub fn CombineEnums(
     return FlattenEnumUnion(NonFlatEnumUnion, .{ .name_separator = options.name_separator });
 }
 
-test "CombineEnums Demo 1" {
+pub fn combineEnums(a: anytype, b: anytype, comptime options: CombineEnumOptions) CombineEnums(@TypeOf(a), @TypeOf(b), options) {
+    const values_a = comptime std.enums.values(@TypeOf(a));
+    const values_b = comptime std.enums.values(@TypeOf(b));
+
+    inline for (values_a) |possible_a| {
+        if (possible_a == a) {
+            inline for (values_b) |possible_b| {
+                if (possible_b == b) {
+                    return @field(CombineEnums(@TypeOf(a), @TypeOf(b), options), @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b));
+                }
+            }
+            unreachable;
+        }
+    }
+    unreachable;
+}
+
+test "CombineEnums" {
     const Rotation = enum {
         clockwise,
         anticlockwise,
@@ -161,4 +179,13 @@ test "CombineEnums Demo 1" {
     try std.testing.expectEqualStrings("west_clockwise", @tagName(values[6]));
     try std.testing.expectEqualStrings("west_anticlockwise", @tagName(values[7]));
     try std.testing.expectEqual(@as(usize, 8), values.len);
+
+    try std.testing.expect(CombineEnums(enum { fizz }, enum { buzz }, .{}) != CombineEnums(enum { fizz }, enum { buzz }, .{}));
+}
+
+test "combineEnums" {
+    const Foo = enum { foo };
+    const Bar = enum { bar };
+    try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnums(Foo.foo, Bar.bar, .{})));
+    try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnums(Bar.bar, Foo.foo, .{})));
 }
