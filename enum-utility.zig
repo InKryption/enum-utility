@@ -16,12 +16,12 @@ pub fn flattenedEnumUnionFieldCount(comptime EnumUnion: type) comptime_int {
 }
 
 pub const FlattenedEnumUnionOptions = struct {
-    /// will be used to separate enum field names
-    name_separator: []const u8 = "_",
     /// if null, flattened enum will take on the minimum necessary integer tag type
     tag_type: ?type = null,
     /// whether the resulting flattened enum should be exhaustive or not
     is_exhaustive: bool = true,
+    /// will be used to separate enum field names
+    name_separator: []const u8 = "_",
 };
 
 pub fn FlattenEnumUnion(
@@ -80,8 +80,7 @@ fn FlattenEnumUnionImpl(
         }
     }
 
-    const selected_tag_type = tag_type orelse
-        std.meta.Int(.unsigned, if (new_fields.len == 0) 0 else (new_fields.len - 1));
+    const selected_tag_type = tag_type orelse std.math.IntFittingRange(0, new_fields.len);
     return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
         .layout = .Auto,
         .tag_type = selected_tag_type,
@@ -147,11 +146,36 @@ test "FlattenEnumUnion Demo 2" {
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Entity)), values.len);
 }
 
-pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
-    return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len;
+pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type, comptime options: CombinedEnumsOptions) comptime_int {
+    return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len + switch (options.optionality) {
+        .all_obligatory => 0,
+        .left_optional => @typeInfo(B).Enum.fields.len,
+        .right_optional => @typeInfo(A).Enum.fields.len,
+        .all_optional => @typeInfo(A).Enum.fields.len + @typeInfo(B).Enum.fields.len,
+    };
 }
 
-pub const CombinedEnumsOptions = FlattenedEnumUnionOptions;
+pub const CombinedEnumsOptions = struct {
+    /// if null, flattened enum will take on the minimum necessary integer tag type
+    tag_type: ?type = null,
+    /// whether the resulting flattened enum should be exhaustive or not
+    is_exhaustive: bool = true,
+    /// will be used to separate enum field names
+    name_separator: []const u8 = "_",
+    /// determines the 'optionality' of the enum combo
+    optionality: Optionality = .all_obligatory,
+
+    const Optionality = enum {
+        /// every member will contain fields from both enums
+        all_obligatory,
+        /// every member will contain a field from the left-hand-side enum, and optionally from the right-hand-side
+        right_optional,
+        /// every member will contain a field from the right-hand-side enum, and optionally from the left-hand-side
+        left_optional,
+        /// every member will contain either a field from the left-hand-side enum, or the right-hand-side enum, or both
+        all_optional,
+    };
+};
 
 pub fn CombinedEnums(
     comptime A: type,
@@ -164,6 +188,7 @@ pub fn CombinedEnums(
         options.name_separator[0..options.name_separator.len].*,
         options.tag_type,
         options.is_exhaustive,
+        options.optionality,
     );
 }
 
@@ -173,49 +198,120 @@ fn CombinedEnumsImpl(
     comptime name_separator: anytype,
     comptime tag_type: ?type,
     comptime is_exhaustive: bool,
+    comptime optionality: CombinedEnumsOptions.Optionality,
 ) type {
-    var union_fields: []const std.builtin.TypeInfo.UnionField = &.{};
+    var new_fields: []const std.builtin.TypeInfo.EnumField = &.{};
 
-    for (@as([]const std.builtin.TypeInfo.EnumField, @typeInfo(A).Enum.fields)) |field_info_a| {
-        union_fields = union_fields ++ &[_]std.builtin.TypeInfo.UnionField{.{
-            .name = field_info_a.name,
-            .field_type = B,
-            .alignment = @alignOf(B),
-        }};
-    }
-
-    const NonFlatEnumUnion = @Type(@unionInit(std.builtin.TypeInfo, "Union", std.builtin.TypeInfo.Union{
-        .layout = .Auto,
-        .tag_type = A,
-        .fields = union_fields,
-        .decls = &.{},
-    }));
-
-    return FlattenEnumUnionImpl(
-        NonFlatEnumUnion,
-        name_separator,
-        tag_type,
-        is_exhaustive,
-    );
-}
-
-pub fn combineEnums(a: anytype, b: anytype, comptime options: CombinedEnumsOptions) CombinedEnums(@TypeOf(a), @TypeOf(b), options) {
-    const values_a = comptime std.enums.values(@TypeOf(a));
-    const values_b = comptime std.enums.values(@TypeOf(b));
-
-    @setEvalBranchQuota(10_000 + 1000 * values_a.len * values_b.len);
-    inline for (values_a) |possible_a| {
-        if (possible_a == a) {
-            inline for (values_b) |possible_b| {
-                if (possible_b == b) {
-                    const field_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
-                    return @field(CombinedEnums(@TypeOf(a), @TypeOf(b), options), field_name);
-                }
-            }
-            unreachable;
+    for (@typeInfo(A).Enum.fields) |field_info_a| {
+        switch (optionality) {
+            .all_obligatory, .left_optional => {},
+            .all_optional, .right_optional => {
+                new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
+                    .name = field_info_a.name,
+                    .value = new_fields.len,
+                }};
+            },
+        }
+        for (@typeInfo(B).Enum.fields) |field_info_b| {
+            new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
+                .name = field_info_a.name ++ name_separator ++ field_info_b.name,
+                .value = new_fields.len,
+            }};
         }
     }
-    unreachable;
+    switch (optionality) {
+        .all_obligatory, .right_optional => {},
+        .all_optional, .left_optional => {
+            for (@typeInfo(B).Enum.fields) |field_info_b| {
+                new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
+                    .name = field_info_b.name,
+                    .value = new_fields.len,
+                }};
+            }
+        },
+    }
+
+    const selected_tag_type = tag_type orelse std.math.IntFittingRange(0, new_fields.len);
+    return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
+        .layout = .Auto,
+        .tag_type = selected_tag_type,
+        .fields = new_fields,
+        .decls = &.{},
+        .is_exhaustive = is_exhaustive,
+    }));
+}
+
+/// Returns a function that can combine the two enums given, with the given configuration.
+pub fn combineEnumsFnTemplate(
+    comptime A: type,
+    comptime B: type,
+    comptime options: CombinedEnumsOptions,
+) return_type: {
+    const Left: type = switch (options.optionality) {
+        .all_obligatory, .right_optional => A,
+        .all_optional, .left_optional => ?A,
+    };
+    const Right: type = switch (options.optionality) {
+        .all_obligatory, .left_optional => B,
+        .all_optional, .right_optional => ?B,
+    };
+    break :return_type fn (Left, Right) CombinedEnums(A, B, options);
+} {
+    const Left: type = switch (options.optionality) {
+        .all_obligatory, .right_optional => A,
+        .all_optional, .left_optional => ?A,
+    };
+    const Right: type = switch (options.optionality) {
+        .all_obligatory, .left_optional => B,
+        .all_optional, .right_optional => ?B,
+    };
+    const Combined: type = CombinedEnums(A, B, options);
+    const Return: type = switch (options.optionality) {
+        .left_optional,
+        .right_optional,
+        .all_obligatory,
+        => Combined,
+        .all_optional => ?Combined,
+    };
+    return struct {
+        fn combineEnums(a: Left, b: Right) Return {
+            const values_a = comptime std.enums.values(A);
+            const values_b = comptime std.enums.values(B);
+
+            switch (options.optionality) {
+                .all_obligatory => {
+                    inline for (values_a) |possible_a| {
+                        inline for (values_b) |possible_b| {
+                            if (possible_a == a and possible_b == b) {
+                                const tag_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
+                                return @field(Combined, tag_name);
+                            }
+                        }
+                    }
+                },
+                .left_optional => blk: {
+                    if (a) |_| break :blk;
+                    inline for (values_b) |possible_b| {
+                        if (possible_b == b) {
+                            return @field(Combined, @tagName(possible_b));
+                        }
+                    }
+                },
+                .right_optional => blk: {
+                    if (b) |_| break :blk;
+                    inline for (values_b) |possible_a| {
+                        if (possible_a == a) {
+                            return @field(Combined, @tagName(possible_a));
+                        }
+                    }
+                },
+                .all_optional => blk: {
+                    if (a) |_| if (b) |_| break :blk;
+                    return null;
+                },
+            }
+        }
+    }.combineEnums;
 }
 
 test "CombinedEnums" {
@@ -241,7 +337,7 @@ test "CombinedEnums" {
     try std.testing.expectEqualStrings("south_anticlockwise", @tagName(values[5]));
     try std.testing.expectEqualStrings("west_clockwise", @tagName(values[6]));
     try std.testing.expectEqualStrings("west_anticlockwise", @tagName(values[7]));
-    try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Direction, Rotation)), values.len);
+    try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Direction, Rotation, .{})), values.len);
 
     const Fizz = enum { fizz };
     const Buzz = enum { buzz };
@@ -251,11 +347,23 @@ test "CombinedEnums" {
     try std.testing.expectEqual(FizzBuzz1, CombinedEnums(Fizz, Buzz, .{}));
 }
 
+test "CombinedEnums Optionals" {
+    const Fizz = enum { fizz };
+    const Buzz = enum { buzz };
+    const FizzBuzz = CombinedEnums(Fizz, Buzz, .{ .optionality = .all_optional });
+
+    const values = std.enums.values(FizzBuzz);
+    try std.testing.expectEqualStrings("fizz", @tagName(values[0]));
+    try std.testing.expectEqualStrings("fizz_buzz", @tagName(values[1]));
+    try std.testing.expectEqualStrings("buzz", @tagName(values[2]));
+    try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Fizz, Buzz, .{ .optionality = .all_optional })), values.len);
+}
+
 test "combineEnums" {
     const Foo = enum { foo };
     const Bar = enum { bar };
-    try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnums(Foo.foo, Bar.bar, .{})));
-    try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnums(Bar.bar, Foo.foo, .{})));
+    try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnumsFnTemplate(Foo, Bar, .{})(.foo, .bar)));
+    try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnumsFnTemplate(Bar, Foo, .{})(.bar, .foo)));
 }
 
 /// Attempts to cast an enum to another enum, by name. Returns null
