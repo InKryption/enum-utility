@@ -24,16 +24,21 @@ pub const FlattenedEnumUnionOptions = struct {
     name_separator: []const u8 = "_",
 };
 
-pub fn FlattenEnumUnion(
-    comptime EnumUnion: type,
-    comptime options: FlattenedEnumUnionOptions,
-) type {
-    return FlattenEnumUnionImpl(
-        EnumUnion,
-        options.name_separator[0..options.name_separator.len].*,
-        options.tag_type,
-        options.is_exhaustive,
-    );
+pub fn FlattenEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
+    return struct {
+        fn FlattenEnumUnion(comptime EnumUnion: type) type {
+            return FlattenEnumUnionImpl(
+                EnumUnion,
+                options.name_separator[0..options.name_separator.len].*,
+                options.tag_type,
+                options.is_exhaustive,
+            );
+        }
+    }.FlattenEnumUnion;
+}
+
+pub fn FlattenEnumUnion(comptime EnumUnion: type, comptime options: FlattenedEnumUnionOptions) type {
+    return FlattenEnumUnionTemplate(options)(EnumUnion);
 }
 
 fn FlattenEnumUnionImpl(
@@ -177,19 +182,30 @@ pub const CombinedEnumsOptions = struct {
     };
 };
 
+pub fn CombinedEnumsTemplate(comptime options: CombinedEnumsOptions) fn (type, type) type {
+    return struct {
+        fn CombinedEnums(
+            comptime A: type,
+            comptime B: type,
+        ) type {
+            return CombinedEnumsImpl(
+                A,
+                B,
+                options.name_separator[0..options.name_separator.len].*,
+                options.tag_type,
+                options.is_exhaustive,
+                options.optionality,
+            );
+        }
+    }.CombinedEnums;
+}
+
 pub fn CombinedEnums(
     comptime A: type,
     comptime B: type,
     comptime options: CombinedEnumsOptions,
 ) type {
-    return CombinedEnumsImpl(
-        A,
-        B,
-        options.name_separator[0..options.name_separator.len].*,
-        options.tag_type,
-        options.is_exhaustive,
-        options.optionality,
-    );
+    return CombinedEnumsTemplate(options)(A, B);
 }
 
 fn CombinedEnumsImpl(
