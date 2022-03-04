@@ -333,7 +333,7 @@ fn CombineEnumsFnTemplateTypesNamespace(
 }
 
 /// Returns a function that can combine the two enums given, with the given configuration.
-pub fn combineEnumsFnTemplate(
+pub fn combineEnumsTemplate(
     comptime A: type,
     comptime B: type,
     comptime options: CombinedEnumsOptions,
@@ -398,15 +398,23 @@ pub fn combineEnumsFnTemplate(
     }.combineEnums;
 }
 
+pub fn combineEnums(
+    a: anytype,
+    b: anytype,
+    comptime options: CombinedEnumsOptions,
+) CombineEnumsFnTemplateTypesNamespace(@TypeOf(a), @TypeOf(b), options).Return {
+    return combineEnumsTemplate(@TypeOf(a), @TypeOf(b), options)(a, b);
+}
+
 test "combineEnums" {
     const Foo = enum { foo };
     const Bar = enum { bar };
-    try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnumsFnTemplate(Foo, Bar, .{})(.foo, .bar)));
-    try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnumsFnTemplate(Bar, Foo, .{})(.bar, .foo)));
+    try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnums(Foo.foo, Bar.bar, .{})));
+    try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnums(Bar.bar, Foo.foo, .{})));
 
     const Fizz = enum { fizz };
     const Buzz = enum { buzz };
-    const combineFizzBuzz = combineEnumsFnTemplate(Fizz, Buzz, .{ .optionality = .all_optional });
+    const combineFizzBuzz = combineEnumsTemplate(Fizz, Buzz, .{ .optionality = .all_optional });
     try std.testing.expectEqualStrings("fizz", @tagName(combineFizzBuzz(.fizz, null).?));
     try std.testing.expectEqualStrings("fizz_buzz", @tagName(combineFizzBuzz(.fizz, .buzz).?));
     try std.testing.expectEqualStrings("buzz", @tagName(combineFizzBuzz(null, .buzz).?));
