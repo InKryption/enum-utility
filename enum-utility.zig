@@ -241,79 +241,6 @@ fn CombinedEnumsImpl(
     }));
 }
 
-/// Returns a function that can combine the two enums given, with the given configuration.
-pub fn combineEnumsFnTemplate(
-    comptime A: type,
-    comptime B: type,
-    comptime options: CombinedEnumsOptions,
-) return_type: {
-    const Left: type = switch (options.optionality) {
-        .all_obligatory, .right_optional => A,
-        .all_optional, .left_optional => ?A,
-    };
-    const Right: type = switch (options.optionality) {
-        .all_obligatory, .left_optional => B,
-        .all_optional, .right_optional => ?B,
-    };
-    break :return_type fn (Left, Right) CombinedEnums(A, B, options);
-} {
-    const Left: type = switch (options.optionality) {
-        .all_obligatory, .right_optional => A,
-        .all_optional, .left_optional => ?A,
-    };
-    const Right: type = switch (options.optionality) {
-        .all_obligatory, .left_optional => B,
-        .all_optional, .right_optional => ?B,
-    };
-    const Combined: type = CombinedEnums(A, B, options);
-    const Return: type = switch (options.optionality) {
-        .left_optional,
-        .right_optional,
-        .all_obligatory,
-        => Combined,
-        .all_optional => ?Combined,
-    };
-    return struct {
-        fn combineEnums(a: Left, b: Right) Return {
-            const values_a = comptime std.enums.values(A);
-            const values_b = comptime std.enums.values(B);
-
-            switch (options.optionality) {
-                .all_obligatory => {
-                    inline for (values_a) |possible_a| {
-                        inline for (values_b) |possible_b| {
-                            if (possible_a == a and possible_b == b) {
-                                const tag_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
-                                return @field(Combined, tag_name);
-                            }
-                        }
-                    }
-                },
-                .left_optional => blk: {
-                    if (a) |_| break :blk;
-                    inline for (values_b) |possible_b| {
-                        if (possible_b == b) {
-                            return @field(Combined, @tagName(possible_b));
-                        }
-                    }
-                },
-                .right_optional => blk: {
-                    if (b) |_| break :blk;
-                    inline for (values_b) |possible_a| {
-                        if (possible_a == a) {
-                            return @field(Combined, @tagName(possible_a));
-                        }
-                    }
-                },
-                .all_optional => blk: {
-                    if (a) |_| if (b) |_| break :blk;
-                    return null;
-                },
-            }
-        }
-    }.combineEnums;
-}
-
 test "CombinedEnums" {
     const Rotation = enum {
         clockwise,
@@ -359,11 +286,115 @@ test "CombinedEnums Optionals" {
     try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Fizz, Buzz, .{ .optionality = .all_optional })), values.len);
 }
 
+fn CombineEnumsFnTemplateTypesNamespace(
+    comptime A: type,
+    comptime B: type,
+    comptime options: CombinedEnumsOptions,
+) type {
+    return struct {
+        pub const Left = switch (options.optionality) {
+            .all_obligatory, .right_optional => A,
+            .all_optional, .left_optional => ?A,
+        };
+
+        pub const Right = switch (options.optionality) {
+            .all_obligatory, .left_optional => B,
+            .all_optional, .right_optional => ?B,
+        };
+
+        pub const Combined = CombinedEnums(A, B, options);
+
+        pub const Return = switch (options.optionality) {
+            .left_optional,
+            .right_optional,
+            .all_obligatory,
+            => Combined,
+            .all_optional => ?Combined,
+        };
+
+        pub const Fn = fn (Left, Right) Return;
+    };
+}
+
+/// Returns a function that can combine the two enums given, with the given configuration.
+pub fn combineEnumsFnTemplate(
+    comptime A: type,
+    comptime B: type,
+    comptime options: CombinedEnumsOptions,
+) CombineEnumsFnTemplateTypesNamespace(A, B, options).Fn {
+    const Left = CombineEnumsFnTemplateTypesNamespace(A, B, options).Left;
+    const Right = CombineEnumsFnTemplateTypesNamespace(A, B, options).Right;
+    const Combined = CombinedEnums(A, B, options);
+    const Return = CombineEnumsFnTemplateTypesNamespace(A, B, options).Return;
+    return comptime struct {
+        fn combineEnums(a: Left, b: Right) Return {
+            const values_a = comptime std.enums.values(A);
+            const values_b = comptime std.enums.values(B);
+
+            switch (options.optionality) {
+                .all_obligatory => {},
+                .left_optional => blk: {
+                    if (a != null) break :blk;
+                    inline for (values_b) |possible_b| {
+                        if (possible_b == b) {
+                            return @field(Combined, @tagName(possible_b));
+                        }
+                    }
+                },
+                .right_optional => blk: {
+                    if (b != null) break :blk;
+                    inline for (values_a) |possible_a| {
+                        if (possible_a == a) {
+                            return @field(Combined, @tagName(possible_a));
+                        }
+                    }
+                },
+                .all_optional => blk: {
+                    if (a != null and b != null) break :blk;
+                    if (a == null and b == null) return null;
+
+                    if (a) |a_unwrapped| inline for (values_a) |possible_a| {
+                        if (possible_a == a_unwrapped) {
+                            return @field(Combined, @tagName(possible_a));
+                        }
+                    };
+
+                    const b_unwrapped = b.?;
+                    inline for (values_b) |possible_b| {
+                        if (possible_b == b_unwrapped) {
+                            return @field(Combined, @tagName(possible_b));
+                        }
+                    }
+                },
+            }
+
+            inline for (values_a) |possible_a| {
+                inline for (values_b) |possible_b| {
+                    if (possible_a == @as(?A, a).? and
+                        possible_b == @as(?B, b).?)
+                    {
+                        const tag_name = @tagName(possible_a) ++ options.name_separator ++ @tagName(possible_b);
+                        return @field(Combined, tag_name);
+                    }
+                }
+            }
+        }
+    }.combineEnums;
+}
+
 test "combineEnums" {
     const Foo = enum { foo };
     const Bar = enum { bar };
     try std.testing.expectEqualStrings("foo_bar", @tagName(combineEnumsFnTemplate(Foo, Bar, .{})(.foo, .bar)));
     try std.testing.expectEqualStrings("bar_foo", @tagName(combineEnumsFnTemplate(Bar, Foo, .{})(.bar, .foo)));
+
+    const Fizz = enum { fizz };
+    const Buzz = enum { buzz };
+    const combineFizzBuzz = combineEnumsFnTemplate(Fizz, Buzz, .{ .optionality = .all_optional });
+    try std.testing.expectEqualStrings("fizz", @tagName(combineFizzBuzz(.fizz, null).?));
+    try std.testing.expectEqualStrings("fizz_buzz", @tagName(combineFizzBuzz(.fizz, .buzz).?));
+    try std.testing.expectEqualStrings("buzz", @tagName(combineFizzBuzz(null, .buzz).?));
+    try std.testing.expectEqual(@as(?CombinedEnums(Fizz, Buzz, .{ .optionality = .all_optional }), null), combineFizzBuzz(null, null));
 }
 
 /// Attempts to cast an enum to another enum, by name. Returns null
