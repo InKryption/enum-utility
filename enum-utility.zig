@@ -24,24 +24,24 @@ pub const FlattenedEnumUnionOptions = struct {
     name_separator: []const u8 = "_",
 };
 
-pub fn FlattenEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
+pub fn FlattenedEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
     return struct {
-        fn FlattenEnumUnion(comptime EnumUnion: type) type {
-            return FlattenEnumUnionImpl(
+        fn FlattenedEnumUnion(comptime EnumUnion: type) type {
+            return FlattenedEnumUnionImpl(
                 EnumUnion,
                 options.name_separator[0..options.name_separator.len].*,
                 options.tag_type,
                 options.is_exhaustive,
             );
         }
-    }.FlattenEnumUnion;
+    }.FlattenedEnumUnion;
 }
 
-pub fn FlattenEnumUnion(comptime EnumUnion: type, comptime options: FlattenedEnumUnionOptions) type {
-    return FlattenEnumUnionTemplate(options)(EnumUnion);
+pub fn FlattenedEnumUnion(comptime EnumUnion: type, comptime options: FlattenedEnumUnionOptions) type {
+    return FlattenedEnumUnionTemplate(options)(EnumUnion);
 }
 
-fn FlattenEnumUnionImpl(
+fn FlattenedEnumUnionImpl(
     comptime EnumUnion: type,
     comptime name_separator: anytype,
     comptime tag_type: ?type,
@@ -64,7 +64,7 @@ fn FlattenEnumUnionImpl(
             .Enum, .Union => {
                 const enum_fields: []const std.builtin.TypeInfo.EnumField = switch (@typeInfo(field_info.field_type)) {
                     .Enum => std.meta.fields(field_info.field_type),
-                    .Union => std.meta.fields(FlattenEnumUnionImpl(
+                    .Union => std.meta.fields(FlattenedEnumUnionImpl(
                         field_info.field_type,
                         name_separator,
                         tag_type,
@@ -95,15 +95,15 @@ fn FlattenEnumUnionImpl(
     }));
 }
 
-test "FlattenEnumUnion Demo 1" {
+test "FlattenedEnumUnion Demo 1" {
     const Abcd = union(enum) {
         a: union(enum) { b: union(enum) { c: union(enum) { d } } },
         d: union(enum) { a: union(enum) { b: union(enum) { c } } },
         c: union(enum) { d: union(enum) { a: union(enum) { b } } },
         b: union(enum) { c: union(enum) { d: union(enum) { a } } },
     };
-    const Flattened = FlattenEnumUnion(Abcd, .{});
-    try std.testing.expectEqual(Flattened, FlattenEnumUnion(Abcd, .{}));
+    const Flattened = FlattenedEnumUnion(Abcd, .{});
+    try std.testing.expectEqual(Flattened, FlattenedEnumUnion(Abcd, .{}));
 
     const values = std.enums.values(Flattened);
     try std.testing.expectEqualStrings("a_b_c_d", @tagName(values[0]));
@@ -113,7 +113,7 @@ test "FlattenEnumUnion Demo 1" {
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Abcd)), values.len);
 }
 
-test "FlattenEnumUnion Demo 2" {
+test "FlattenedEnumUnion Demo 2" {
     const Entity = union(enum) {
         human: union(enum) {
             villager: union(enum) {
@@ -134,8 +134,8 @@ test "FlattenEnumUnion Demo 2" {
             dragon,
         },
     };
-    const Flattened = FlattenEnumUnion(Entity, .{});
-    try std.testing.expectEqual(Flattened, FlattenEnumUnion(Entity, .{}));
+    const Flattened = FlattenedEnumUnion(Entity, .{});
+    try std.testing.expectEqual(Flattened, FlattenedEnumUnion(Entity, .{}));
 
     const values = std.enums.values(Flattened);
     try std.testing.expectEqualStrings("human_villager_farmer", @tagName(values[0]));
