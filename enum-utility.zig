@@ -24,7 +24,7 @@ pub const FlattenedEnumUnionOptions = struct {
     name_separator: []const u8 = "_",
 };
 
-/// Expects a union type, whose fields are all either void, an enum, or a union which meets the former
+/// Expects a tagged union type, whose fields are all either void, an enum, or a union which meets the former
 /// two constraints, or the third of these constraints, recursively. The resulting type with be an enum,
 /// whose fields are all flattened versions of the possible state combinations.
 ///
@@ -51,8 +51,8 @@ pub fn FlattenedEnumUnion(comptime EnumUnion: type, comptime options: FlattenedE
     return flattenedEnumUnionTemplate(options)(EnumUnion);
 }
 
-/// Returns a function equivalent to `FlattenedEnumUnion`, outputing a type using the
-/// options given here.
+/// Returns a function equivalent to `FlattenedEnumUnion`,
+/// outputing a type using the options given.
 pub fn flattenedEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
     return struct {
         fn FlattenedEnumUnion(comptime EnumUnion: type) type {
@@ -176,6 +176,154 @@ test "FlattenedEnumUnion Demo 2" {
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Entity)), values.len);
 }
 
+pub fn flattenEnumUnion(
+    enum_union: anytype,
+    comptime options: FlattenedEnumUnionOptions,
+) FlattenedEnumUnion(@TypeOf(enum_union), options) {
+    return flattenEnumUnionTemplate(@TypeOf(enum_union), options)(enum_union);
+}
+
+pub fn flattenEnumUnionTemplate(
+    comptime EnumUnion: type,
+    comptime options: FlattenedEnumUnionOptions,
+) (fn (EnumUnion) FlattenedEnumUnion(EnumUnion, options)) {
+    const Return = FlattenedEnumUnion(EnumUnion, options);
+    return struct {
+        fn flattenEnumUnion(enum_union: EnumUnion) Return {
+            inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |possible_tag| {
+                if (possible_tag == enum_union) {
+                    const field_value = @field(enum_union, @tagName(possible_tag));
+                    const FieldType = @TypeOf(field_value);
+                    switch (@typeInfo(FieldType)) {
+                        .Void => return @field(Return, @tagName(possible_tag)),
+                        .Enum => inline for (comptime std.enums.values(FieldType)) |possible_field_value| {
+                            if (possible_field_value == field_value) {
+                                const field_name =
+                                    @tagName(possible_tag) ++
+                                    options.name_separator ++
+                                    @tagName(possible_field_value);
+                                return @field(Return, field_name);
+                            }
+                        } else unreachable,
+                        .Union => {
+                            const flattened_field_value = flattenEnumUnionTemplate(FieldType, options)(field_value);
+                            inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType, options))) |possible_flattened_field_value| {
+                                if (possible_flattened_field_value == flattened_field_value) {
+                                    const field_name =
+                                        @tagName(possible_tag) ++
+                                        options.name_separator ++
+                                        @tagName(possible_flattened_field_value);
+                                    return @field(Return, field_name);
+                                }
+                            } else unreachable;
+                        },
+                        else => unreachable,
+                    }
+                }
+            } else unreachable;
+        }
+    }.flattenEnumUnion;
+}
+
+pub fn unflattenEnumUnion(
+    flattened: anytype,
+    comptime EnumUnion: type,
+    comptime options: FlattenedEnumUnionOptions,
+) EnumUnion {
+    return unflattenEnumUnionTemplate(EnumUnion, options)(flattened);
+}
+
+pub fn unflattenEnumUnionTemplate(
+    comptime EnumUnion: type,
+    comptime options: FlattenedEnumUnionOptions,
+) fn (FlattenedEnumUnion(EnumUnion, options)) EnumUnion {
+    const Flattened = FlattenedEnumUnion(EnumUnion, options);
+    return struct {
+        fn unflattenEnumUnion(flattened_runtime: Flattened) EnumUnion {
+            @setEvalBranchQuota(10_000 + 10_000 * std.meta.fields(Flattened).len);
+            inline for (comptime std.enums.values(Flattened)) |flattened| {
+                if (flattened == flattened_runtime) {
+                    inline for (comptime std.meta.fields(EnumUnion)) |field| {
+                        switch (@typeInfo(field.field_type)) {
+                            .Void => {
+                                const maybe_unflattened = @unionInit(EnumUnion, @tagName(flattened), void{});
+                                if (comptime flattenEnumUnion(maybe_unflattened, options) == flattened) {
+                                    return maybe_unflattened;
+                                }
+                            },
+                            .Enum => |info| {
+                                inline for (info.fields) |tag_info| {
+                                    const maybe_unflattened = @unionInit(EnumUnion, @tagName(flattened), @field(field.field_type, tag_info.name));
+                                    if (comptime flattenEnumUnion(maybe_unflattened, options) == flattened) {
+                                        return maybe_unflattened;
+                                    }
+                                }
+                            },
+                            .Union => |_| {
+                                std.debug.todo("Implement this branch");
+                            },
+                            else => unreachable,
+                        }
+                    } else unreachable;
+                }
+            } else unreachable;
+        }
+    }.unflattenEnumUnion;
+}
+
+test "flattenEnumUnion & unflattenEnumUnion" {
+    const Location = union(enum) {
+        school: union(enum) {
+            playground,
+            class: enum { a, b, c },
+        },
+        theatre: union(enum) {
+            auditorium,
+            stage: enum { back, front },
+        },
+    };
+
+    const ExpectedActualPair = struct { expected: []const u8, input: Location };
+    inline for ([_]ExpectedActualPair{
+        .{ .expected = "school_playground", .input = .{ .school = .playground } },
+
+        .{ .expected = "school_class_a", .input = .{ .school = .{ .class = .a } } },
+        .{ .expected = "school_class_b", .input = .{ .school = .{ .class = .b } } },
+        .{ .expected = "school_class_c", .input = .{ .school = .{ .class = .c } } },
+
+        .{ .expected = "theatre_auditorium", .input = .{ .theatre = .auditorium } },
+
+        .{ .expected = "theatre_stage_back", .input = .{ .theatre = .{ .stage = .back } } },
+        .{ .expected = "theatre_stage_front", .input = .{ .theatre = .{ .stage = .front } } },
+    }) |values| {
+        const flattened = flattenEnumUnion(values.input, .{});
+        try std.testing.expectEqualStrings(values.expected, @tagName(flattened));
+        try std.testing.expectEqual(values.input, unflattenEnumUnion(flattened, Location, .{}));
+    }
+}
+
+test "unflattenEnumUnion No Separator" {
+    const Id = union(enum) {
+        a: Xyz,
+        b: std.meta.Tag(Xyz),
+        c,
+        const Xyz = union(enum) {
+            x: Tuw,
+            y: Tuw,
+            z: Tuw,
+
+            const Tuw = union(enum) { t, u, w };
+        };
+    };
+
+    const flattenId = flattenEnumUnionTemplate(Id, .{ .name_separator = "" });
+    const unflattenId = unflattenEnumUnionTemplate(Id, .{ .name_separator = "" });
+
+    inline for (comptime std.enums.values(FlattenedEnumUnion(Id, .{ .name_separator = "" }))) |flattened| {
+        try std.testing.expectEqual(flattened, flattenId(unflattenId(flattened)));
+    }
+}
+
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type, comptime options: CombinedEnumsOptions) comptime_int {
     return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len + switch (options.optionality) {
         .all_obligatory => 0,
@@ -194,19 +342,48 @@ pub const CombinedEnumsOptions = struct {
     name_separator: []const u8 = "_",
     /// determines the 'optionality' of the enum combo
     optionality: Optionality = .all_obligatory,
+    /// determines name collision handling strategy
+    collision_resolution: Optionality = .all_obligatory,
 
-    const Optionality = enum {
-        /// every member will contain fields from both enums
+    pub const Optionality = union(enum) {
+        /// Every member will contain fields from both enums
         all_obligatory,
-        /// every member will contain a field from the left-hand-side enum, and optionally from the right-hand-side
+        /// Every member will contain a field from the left-hand-side enum, and optionally from the right-hand-side.
         right_optional,
-        /// every member will contain a field from the right-hand-side enum, and optionally from the left-hand-side
+        /// Every member will contain a field from the right-hand-side enum, and optionally from the left-hand-side.
         left_optional,
-        /// every member will contain either a field from the left-hand-side enum, or the right-hand-side enum, or both
-        all_optional,
+        /// Every member will contain either a field from the left-hand-side enum, or the right-hand-side enum, or both.
+        all_optional: NameResolution,
+
+        pub const NameResolution = void;
+        // pub const NameResolution = enum {
+        //     /// Produce compilation error on name collision.
+        //     compile_error,
+        //     /// Collapse two instances of name into one.
+        //     unify,
+        //     /// Appends index per instance of collision.
+        //     mangle_index,
+        //     /// Prepends 'name_separator' to colliding members of B.
+        //     mangle_prefix_separator,
+        //     /// Appends 'name_separator' to colliding members of A.
+        //     mangle_postfix_separator,
+        //     /// Appends, and prepends, 'name_separator' to colliding members of A, and B, respectively.
+        //     mangle_prefix_and_postifx_separator,
+        // };
     };
 };
 
+/// Given two enum types `A` and `B`, returns a
+pub fn CombinedEnums(
+    comptime A: type,
+    comptime B: type,
+    comptime options: CombinedEnumsOptions,
+) type {
+    return combinedEnumsTemplate(options)(A, B);
+}
+
+/// Returns a function equivalent to `CombinedEnums`,
+/// outputing a type using the options given.
 pub fn combinedEnumsTemplate(comptime options: CombinedEnumsOptions) fn (type, type) type {
     return struct {
         fn CombinedEnums(
@@ -223,14 +400,6 @@ pub fn combinedEnumsTemplate(comptime options: CombinedEnumsOptions) fn (type, t
             );
         }
     }.CombinedEnums;
-}
-
-pub fn CombinedEnums(
-    comptime A: type,
-    comptime B: type,
-    comptime options: CombinedEnumsOptions,
-) type {
-    return combinedEnumsTemplate(options)(A, B);
 }
 
 fn CombinedEnumsImpl(
@@ -327,6 +496,23 @@ test "CombinedEnums Optionals" {
     try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Fizz, Buzz, .{ .optionality = .all_optional })), values.len);
 }
 
+// test "CombinedEnums All Optional Name Collisions" {
+//     const FooBar = enum { foo, bar };
+//     const FooBar2 = enum { foo, bar };
+//     const FooFooBarBar = CombinedEnums(FooBar, FooBar2, .{ .optionality = .all_optional });
+//     comptime for (std.enums.values(FooFooBarBar)) |tag| {
+//         @compileLog(tag);
+//     };
+// }
+
+pub fn combineEnums(
+    a: anytype,
+    b: anytype,
+    comptime options: CombinedEnumsOptions,
+) CombineEnumsFnTemplateTypesNamespace(@TypeOf(a), @TypeOf(b), options).Return {
+    return combineEnumsTemplate(@TypeOf(a), @TypeOf(b), options)(a, b);
+}
+
 /// Returns a function that can combine the two enums given, with the given configuration.
 pub fn combineEnumsTemplate(
     comptime A: type,
@@ -393,14 +579,6 @@ pub fn combineEnumsTemplate(
     }.combineEnums;
 }
 
-pub fn combineEnums(
-    a: anytype,
-    b: anytype,
-    comptime options: CombinedEnumsOptions,
-) CombineEnumsFnTemplateTypesNamespace(@TypeOf(a), @TypeOf(b), options).Return {
-    return combineEnumsTemplate(@TypeOf(a), @TypeOf(b), options)(a, b);
-}
-
 fn CombineEnumsFnTemplateTypesNamespace(
     comptime A: type,
     comptime B: type,
@@ -458,9 +636,9 @@ pub fn tagNameCast(comptime T: type, from: anytype) ?T {
         return @field(T, tag_name);
     }
 
-    inline for (comptime std.enums.values(FromType)) |possible_value| {
-        if (possible_value == from) {
-            const tag_name = @tagName(possible_value);
+    inline for (comptime std.enums.values(FromType)) |active_tag| {
+        if (active_tag == from) {
+            const tag_name = @tagName(active_tag);
             if (!@hasField(T, tag_name)) return null;
             return @field(T, tag_name);
         }
