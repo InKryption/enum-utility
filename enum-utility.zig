@@ -131,10 +131,15 @@ test "FlattenedEnumUnion Demo 1" {
     try std.testing.expectEqual(Flattened, FlattenedEnumUnion(Abcd, .{}));
 
     const values = std.enums.values(Flattened);
-    try std.testing.expectEqualStrings("a_b_c_d", @tagName(values[0]));
-    try std.testing.expectEqualStrings("d_a_b_c", @tagName(values[1]));
-    try std.testing.expectEqualStrings("c_d_a_b", @tagName(values[2]));
-    try std.testing.expectEqualStrings("b_c_d_a", @tagName(values[3]));
+    inline for ([_][]const u8{
+        "a_b_c_d",
+        "d_a_b_c",
+        "c_d_a_b",
+        "b_c_d_a",
+    }) |expected, i| {
+        const actual: []const u8 = @tagName(values[i]);
+        try std.testing.expectEqualStrings(expected, actual);
+    }
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Abcd)), values.len);
 }
 
