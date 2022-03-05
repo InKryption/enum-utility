@@ -140,39 +140,34 @@ test "FlattenedEnumUnion Demo 1" {
 
 test "FlattenedEnumUnion Demo 2" {
     const Entity = union(enum) {
-        human: union(enum) {
-            villager: union(enum) {
-                farmer,
-                baker,
-                fisher,
-                smith,
-            },
-            guard: union(enum) {
-                gate,
-                patrol,
-                castle,
-            },
-        },
-        monster: enum {
-            goblin,
-            ogre,
-            dragon,
-        },
+        monster: Monster,
+        human: Human,
+
+        const Monster = enum { goblin, ogre, dragon };
+        const Human = union(enum) {
+            villager: enum { farmer, baker, fisher, smith },
+            guard: union(enum) { gate, patrol, castle },
+        };
     };
     const Flattened = FlattenedEnumUnion(Entity, .{});
     try std.testing.expectEqual(Flattened, FlattenedEnumUnion(Entity, .{}));
 
     const values = std.enums.values(Flattened);
-    try std.testing.expectEqualStrings("human_villager_farmer", @tagName(values[0]));
-    try std.testing.expectEqualStrings("human_villager_baker", @tagName(values[1]));
-    try std.testing.expectEqualStrings("human_villager_fisher", @tagName(values[2]));
-    try std.testing.expectEqualStrings("human_villager_smith", @tagName(values[3]));
-    try std.testing.expectEqualStrings("human_guard_gate", @tagName(values[4]));
-    try std.testing.expectEqualStrings("human_guard_patrol", @tagName(values[5]));
-    try std.testing.expectEqualStrings("human_guard_castle", @tagName(values[6]));
-    try std.testing.expectEqualStrings("monster_goblin", @tagName(values[7]));
-    try std.testing.expectEqualStrings("monster_ogre", @tagName(values[8]));
-    try std.testing.expectEqualStrings("monster_dragon", @tagName(values[9]));
+    inline for ([_][]const u8{
+        "monster_goblin",
+        "monster_ogre",
+        "monster_dragon",
+        "human_villager_farmer",
+        "human_villager_baker",
+        "human_villager_fisher",
+        "human_villager_smith",
+        "human_guard_gate",
+        "human_guard_patrol",
+        "human_guard_castle",
+    }) |expected, i| {
+        const actual: []const u8 = @tagName(values[i]);
+        try std.testing.expectEqualStrings(expected, actual);
+    }
     try std.testing.expectEqual(@as(usize, flattenedEnumUnionFieldCount(Entity)), values.len);
 }
 
