@@ -24,7 +24,36 @@ pub const FlattenedEnumUnionOptions = struct {
     name_separator: []const u8 = "_",
 };
 
-pub fn FlattenedEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
+/// Expects a union type, whose fields are all either void, an enum, or a union which meets the former
+/// two constraints, or the third of these constraints, recursively. The resulting type with be an enum,
+/// whose fields are all flattened versions of the possible state combinations.
+///
+/// So given an input type, with field written as
+/// ```
+/// monster: enum { slime, goblin, troll },
+/// ```
+/// using default configuration, the resulting type would include fields named: 
+/// * `monster_slime`
+/// * `monster_goblin`
+/// * `monster_troll`
+///
+/// This also then applies recursively to fields which are union types,
+/// so given an input type, with a field written as
+/// ```
+/// human: union(enum) { royal, citizen: Citizen },
+/// const Citizen = enum { peasant, artisan };
+/// ```
+/// using default configuration, the resulting type would include fields named:
+/// * `human_royal`
+/// * `human_citizen_peasant`
+/// * `human_citizen_artisan`
+pub fn FlattenedEnumUnion(comptime EnumUnion: type, comptime options: FlattenedEnumUnionOptions) type {
+    return flattenedEnumUnionTemplate(options)(EnumUnion);
+}
+
+/// Returns a function equivalent to `FlattenedEnumUnion`, outputing a type using the
+/// options given here.
+pub fn flattenedEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) fn (type) type {
     return struct {
         fn FlattenedEnumUnion(comptime EnumUnion: type) type {
             return FlattenedEnumUnionImpl(
@@ -35,10 +64,6 @@ pub fn FlattenedEnumUnionTemplate(comptime options: FlattenedEnumUnionOptions) f
             );
         }
     }.FlattenedEnumUnion;
-}
-
-pub fn FlattenedEnumUnion(comptime EnumUnion: type, comptime options: FlattenedEnumUnionOptions) type {
-    return FlattenedEnumUnionTemplate(options)(EnumUnion);
 }
 
 fn FlattenedEnumUnionImpl(
@@ -182,7 +207,7 @@ pub const CombinedEnumsOptions = struct {
     };
 };
 
-pub fn CombinedEnumsTemplate(comptime options: CombinedEnumsOptions) fn (type, type) type {
+pub fn combinedEnumsTemplate(comptime options: CombinedEnumsOptions) fn (type, type) type {
     return struct {
         fn CombinedEnums(
             comptime A: type,
@@ -205,7 +230,7 @@ pub fn CombinedEnums(
     comptime B: type,
     comptime options: CombinedEnumsOptions,
 ) type {
-    return CombinedEnumsTemplate(options)(A, B);
+    return combinedEnumsTemplate(options)(A, B);
 }
 
 fn CombinedEnumsImpl(
@@ -302,36 +327,6 @@ test "CombinedEnums Optionals" {
     try std.testing.expectEqual(@as(usize, combinedEnumsFieldCount(Fizz, Buzz, .{ .optionality = .all_optional })), values.len);
 }
 
-fn CombineEnumsFnTemplateTypesNamespace(
-    comptime A: type,
-    comptime B: type,
-    comptime options: CombinedEnumsOptions,
-) type {
-    return struct {
-        pub const Left = switch (options.optionality) {
-            .all_obligatory, .right_optional => A,
-            .all_optional, .left_optional => ?A,
-        };
-
-        pub const Right = switch (options.optionality) {
-            .all_obligatory, .left_optional => B,
-            .all_optional, .right_optional => ?B,
-        };
-
-        pub const Combined = CombinedEnums(A, B, options);
-
-        pub const Return = switch (options.optionality) {
-            .left_optional,
-            .right_optional,
-            .all_obligatory,
-            => Combined,
-            .all_optional => ?Combined,
-        };
-
-        pub const Fn = fn (Left, Right) Return;
-    };
-}
-
 /// Returns a function that can combine the two enums given, with the given configuration.
 pub fn combineEnumsTemplate(
     comptime A: type,
@@ -404,6 +399,36 @@ pub fn combineEnums(
     comptime options: CombinedEnumsOptions,
 ) CombineEnumsFnTemplateTypesNamespace(@TypeOf(a), @TypeOf(b), options).Return {
     return combineEnumsTemplate(@TypeOf(a), @TypeOf(b), options)(a, b);
+}
+
+fn CombineEnumsFnTemplateTypesNamespace(
+    comptime A: type,
+    comptime B: type,
+    comptime options: CombinedEnumsOptions,
+) type {
+    return struct {
+        pub const Left = switch (options.optionality) {
+            .all_obligatory, .right_optional => A,
+            .all_optional, .left_optional => ?A,
+        };
+
+        pub const Right = switch (options.optionality) {
+            .all_obligatory, .left_optional => B,
+            .all_optional, .right_optional => ?B,
+        };
+
+        pub const Combined = CombinedEnums(A, B, options);
+
+        pub const Return = switch (options.optionality) {
+            .left_optional,
+            .right_optional,
+            .all_obligatory,
+            => Combined,
+            .all_optional => ?Combined,
+        };
+
+        pub const Fn = fn (Left, Right) Return;
+    };
 }
 
 test "combineEnums" {
