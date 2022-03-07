@@ -84,7 +84,27 @@ pub fn FlattenedEnumUnion(comptime EnumUnion: type) type {
 }
 
 pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
-    std.debug.todo("Actually implement");
+    const EnumUnion = @TypeOf(enum_union);
+    const Flattened = FlattenedEnumUnion(EnumUnion);
+    _ = Flattened;
+    const lut = comptime lut: {
+        break :lut;
+    };
+    _ = lut;
+    std.debug.todo("Actuall implement");
+}
+
+pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
+    const Flattened = FlattenedEnumUnion(EnumUnion);
+    const Lut = std.EnumArray(Flattened, EnumUnion);
+    const lut: Lut = comptime lut: {
+        var lut = Lut.initUndefined();
+        for (everyEnumUnionPermutation(EnumUnion)) |permutation| {
+            lut.set(flattenEnumUnionPermutation(permutation), permutation);
+        }
+        break :lut lut;
+    };
+    return lut.get(flattened);
 }
 
 fn everyEnumUnionPermutation(comptime EnumUnion: type) *const [std.meta.fields(FlattenedEnumUnion(EnumUnion)).len]EnumUnion {
@@ -93,13 +113,13 @@ fn everyEnumUnionPermutation(comptime EnumUnion: type) *const [std.meta.fields(F
         for (@as([]const std.builtin.TypeInfo.UnionField, std.meta.fields(EnumUnion))) |base_field| {
             switch (@typeInfo(base_field.field_type)) {
                 .Void => {
-                    result = result ++ .{@unionInit(EnumUnion, base_field.name, void{})};
+                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, void{})};
                 },
                 .Enum => for (std.enums.values(base_field.field_type)) |base_field_value| {
-                    result = result ++ .{@unionInit(EnumUnion, base_field.name, base_field_value)};
+                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, base_field_value)};
                 },
                 .Union => for (everyEnumUnionPermutation(base_field.field_type)) |base_field_value| {
-                    result = result ++ .{@unionInit(EnumUnion, base_field.name, base_field_value)};
+                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, base_field_value)};
                 },
                 else => unreachable,
             }
@@ -108,60 +128,45 @@ fn everyEnumUnionPermutation(comptime EnumUnion: type) *const [std.meta.fields(F
     }
 }
 
-fn flattenEnumUnionImpl(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
+fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
     const name_separator = "_".*;
 
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
 
-    inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |possible_tag| {
-        if (possible_tag == enum_union) {
-            const field_value = @field(enum_union, @tagName(possible_tag));
-            const FieldType = @TypeOf(field_value);
-            switch (@typeInfo(FieldType)) {
-                .Void => return @field(Flattened, @tagName(possible_tag)),
-                .Enum => inline for (comptime std.enums.values(FieldType)) |possible_field_value| {
-                    if (possible_field_value == field_value) {
-                        const field_name =
-                            @tagName(possible_tag) ++
-                            name_separator ++
-                            @tagName(possible_field_value);
-                        return @field(Flattened, field_name);
-                    }
-                } else unreachable,
-                .Union => {
-                    const flattened_field_value = flattenEnumUnion(field_value);
-                    inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |possible_flattened_field_value| {
-                        if (possible_flattened_field_value == flattened_field_value) {
-                            const field_name =
-                                @tagName(possible_tag) ++
-                                name_separator ++
-                                @tagName(possible_flattened_field_value);
-                            return @field(Flattened, field_name);
-                        }
-                    } else unreachable;
-                },
-                else => unreachable,
-            }
-        }
-    } else unreachable;
+    const field_value = @field(enum_union, @tagName(enum_union));
+    const FieldType = @TypeOf(field_value);
+    return switch (@typeInfo(FieldType)) {
+        .Void => @field(Flattened, @tagName(enum_union)),
+        .Enum => @field(Flattened, @tagName(enum_union) ++ name_separator ++ @tagName(field_value)),
+        .Union => @field(Flattened, @tagName(enum_union) ++ name_separator ++ @tagName(flattenEnumUnionPermutation(field_value))),
+        else => unreachable,
+    };
 }
 
 test {
     const Entity = union(enum) {
-        human: union(enum) {
-            royalty,
-            guard: enum { gate, patrol },
-            peasant,
-        },
-        monster: enum {
+        alien,
+        monster: Monster,
+        human: Human,
+
+        const Monster = enum {
             slime,
             goblin,
             troll,
-        },
-    };
+        };
 
-    try std.testing.expectEqual(flattenEnumUnion(Entity{ .human = .{ .guard = .gate } }), .human_guard_gate);
+        const Human = union(enum) {
+            royalty,
+            peasant,
+            guard: Guard,
+
+            const Guard = enum { gate, patrol };
+        };
+    };
+    _ = Entity;
+
+    try std.testing.expectEqual(Entity{ .human = .{ .guard = .gate } }, unflattenEnumUnion(Entity, .human_guard_gate));
 }
 
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
