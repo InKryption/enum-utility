@@ -87,11 +87,19 @@ pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_uni
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
     _ = Flattened;
+    const Int = std.meta.Int(
+        .unsigned,
+        @tagName(longestEnumName(std.meta.Tag(EnumUnion))).len * std.mem.byte_size_in_bits,
+    );
     const lut = comptime lut: {
+        var indexes: []const Int = &.{};
+        for () {
+            
+        }
         break :lut;
     };
     _ = lut;
-    std.debug.todo("Actuall implement");
+    std.debug.todo("Actually implement");
 }
 
 pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
@@ -144,6 +152,16 @@ fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(
     };
 }
 
+pub fn longestEnumName(comptime Enum: type) Enum {
+    comptime {
+        return std.sort.argMax(Enum, std.enums.values(Enum), void{}, struct {
+            fn lessThan(_: void, lhs: Enum, rhs: Enum) std.math.Order {
+                return @tagName(lhs).len < @tagName(rhs).len;
+            }
+        }.lessThan);
+    }
+}
+
 test {
     const Entity = union(enum) {
         alien,
@@ -166,7 +184,9 @@ test {
     };
     _ = Entity;
 
-    try std.testing.expectEqual(Entity{ .human = .{ .guard = .gate } }, unflattenEnumUnion(Entity, .human_guard_gate));
+    comptime for (everyEnumUnionPermutation(EnumUnionSubVariantLut(Entity, 2))) |tag| {
+        @compileLog(@intToEnum(FlattenedEnumUnion(Entity), @enumToInt(tag)), "->".*, tag);
+    };
 }
 
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
