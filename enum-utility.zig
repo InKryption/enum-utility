@@ -89,7 +89,6 @@ pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_uni
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
 
-    var result: Flattened = undefined;
     inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
         if (enum_union == tag) {
             const tag_name = @tagName(tag);
@@ -105,13 +104,13 @@ pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_uni
                         }
                         break :lut lut;
                     };
-                    result = lut.get(field_value);
+                    return lut.get(field_value);
                 },
                 .Union => {
                     const flattened = flattenEnumUnion(field_value);
                     inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |subtag| {
                         if (flattened == subtag) {
-                            result = @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
+                            return @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
                         }
                     }
                 },
@@ -120,7 +119,7 @@ pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_uni
         }
     }
 
-    return result;
+    unreachable;
 }
 
 pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
@@ -171,11 +170,6 @@ fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(
         .Union => @field(Flattened, @tagName(enum_union) ++ name_separator ++ @tagName(flattenEnumUnionPermutation(field_value))),
         else => unreachable,
     };
-}
-
-export fn foo() void {
-    var ent = if (std.rand.DefaultPrng.init(0).random().boolean()) Entity{ .human = .{ .guard = .patrol } } else Entity{ .human = .royalty };
-    std.mem.doNotOptimizeAway(@call(.{ .modifier = .never_inline }, flattenEnumUnion, .{ent}));
 }
 
 const Entity = union(enum) {
