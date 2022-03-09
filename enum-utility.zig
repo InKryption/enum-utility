@@ -89,6 +89,14 @@ pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_uni
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
 
+    const lut = comptime lut: {
+        var lut: []const Flattened = &.{};
+        for (everyEnumUnionPermutation()) |permutation| {
+            const hash = enumUnionHash(permutation);
+        }
+        break :lut lut[0..].*;
+    };
+
     inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
         if (enum_union == tag) {
             const tag_name = @tagName(tag);
@@ -172,6 +180,34 @@ fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(
     };
 }
 
+fn enumUnionHash(enum_union: anytype) u64 {
+    const EnumUnion = @TypeOf(enum_union);
+    _ = FlattenedEnumUnion(EnumUnion);
+    var hash: u64 = 0;
+
+    comptime var i = 0;
+    inline for (std.meta.fields(EnumUnion)) |field| {
+        switch (@typeInfo(field.field_type)) {
+            .Void => {
+                comptime i += 1;
+                hash += i * @boolToInt(@field(std.meta.Tag(Entity), field.name) == enum_union);
+            },
+            .Enum => {
+                comptime i += std.meta.fields(field.field_type).len;
+                hash += i * @boolToInt(@field(std.meta.Tag(Entity), field.name) == enum_union);
+            },
+            .Union => {
+                comptime i += std.meta.fields(FlattenedEnumUnion(field.field_type)).len;
+                const is_eql = @field(std.meta.Tag(Entity), field.name) == enum_union;
+                hash += i * @boolToInt(is_eql);
+                hash += if (is_eql) enumUnionHash(@field(enum_union, field.name)) else 0;
+            },
+        }
+    }
+
+    return hash;
+}
+
 const Entity = union(enum) {
     alien,
     monster: Monster,
@@ -192,12 +228,55 @@ const Entity = union(enum) {
     };
 };
 
+var ent: Entity = undefined;
+
+noinline fn initEnt() void {
+    ent = if (std.rand.DefaultPrng.init(0).random().boolean()) Entity{ .human = .{ .guard = .patrol } } else Entity{ .human = .royalty };
+}
+
+export fn foo1() usize {
+    initEnt();
+    return switch (flattenEnumUnion(ent)) {
+        flattenEnumUnion(Entity{ .alien = {} }) => 0,
+
+        flattenEnumUnion(Entity{ .monster = .slime }) => 1,
+        flattenEnumUnion(Entity{ .monster = .goblin }) => 2,
+        flattenEnumUnion(Entity{ .monster = .troll }) => 3,
+
+        flattenEnumUnion(Entity{ .human = .royalty }) => 4,
+        flattenEnumUnion(Entity{ .human = .peasant }) => 5,
+        flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }) => 6,
+        flattenEnumUnion(Entity{ .human = .{ .guard = .gate } }) => 7,
+    };
+}
+
+export fn foo2() usize {
+    initEnt();
+    const local_ent = ent;
+    return switch (local_ent) {
+        .alien => @as(usize, 0),
+        .monster => |monster| @as(usize, switch (monster) {
+            .slime => 1,
+            .goblin => 2,
+            .troll => 3,
+        }),
+        .human => |human| switch (human) {
+            .royalty => 4,
+            .peasant => 5,
+            .guard => |guard| @as(usize, switch (guard) {
+                .patrol => 6,
+                .gate => 7,
+            }),
+        },
+    };
+}
+
 test {
     _ = Entity;
 
     std.debug.print("\n", .{});
     _ = flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } });
-    // try std.testing.expectEqual(flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }), .human_guard_patrol);
+    try std.testing.expectEqual(flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }), .human_guard_patrol);
 }
 
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
