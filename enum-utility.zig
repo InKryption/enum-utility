@@ -84,22 +84,43 @@ pub fn FlattenedEnumUnion(comptime EnumUnion: type) type {
 }
 
 pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
+    const name_separator = "_".*;
+
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
-    _ = Flattened;
-    const Int = std.meta.Int(
-        .unsigned,
-        @tagName(longestEnumName(std.meta.Tag(EnumUnion))).len * std.mem.byte_size_in_bits,
-    );
-    const lut = comptime lut: {
-        var indexes: []const Int = &.{};
-        for () {
-            
+
+    var result: Flattened = undefined;
+    inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
+        if (enum_union == tag) {
+            const tag_name = @tagName(tag);
+            const field_value = @field(enum_union, tag_name);
+            const FieldType = @TypeOf(field_value);
+            switch (@typeInfo(FieldType)) {
+                .Void => return @field(Flattened, @tagName(tag)),
+                .Enum => {
+                    const lut = comptime lut: {
+                        var lut = std.EnumArray(FieldType, Flattened).initUndefined();
+                        for (std.enums.values(FieldType)) |subtag| {
+                            lut.set(subtag, @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag)));
+                        }
+                        break :lut lut;
+                    };
+                    result = lut.get(field_value);
+                },
+                .Union => {
+                    const flattened = flattenEnumUnion(field_value);
+                    inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |subtag| {
+                        if (flattened == subtag) {
+                            result = @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
+                        }
+                    }
+                },
+                else => unreachable,
+            }
         }
-        break :lut;
-    };
-    _ = lut;
-    std.debug.todo("Actually implement");
+    }
+
+    return result;
 }
 
 pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
@@ -152,41 +173,37 @@ fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(
     };
 }
 
-pub fn longestEnumName(comptime Enum: type) Enum {
-    comptime {
-        return std.sort.argMax(Enum, std.enums.values(Enum), void{}, struct {
-            fn lessThan(_: void, lhs: Enum, rhs: Enum) std.math.Order {
-                return @tagName(lhs).len < @tagName(rhs).len;
-            }
-        }.lessThan);
-    }
+export fn foo() void {
+    var ent = if (std.rand.DefaultPrng.init(0).random().boolean()) Entity{ .human = .{ .guard = .patrol } } else Entity{ .human = .royalty };
+    std.mem.doNotOptimizeAway(@call(.{ .modifier = .never_inline }, flattenEnumUnion, .{ent}));
 }
 
-test {
-    const Entity = union(enum) {
-        alien,
-        monster: Monster,
-        human: Human,
+const Entity = union(enum) {
+    alien,
+    monster: Monster,
+    human: Human,
 
-        const Monster = enum {
-            slime,
-            goblin,
-            troll,
-        };
-
-        const Human = union(enum) {
-            royalty,
-            peasant,
-            guard: Guard,
-
-            const Guard = enum { gate, patrol };
-        };
+    const Monster = enum {
+        slime,
+        goblin,
+        troll,
     };
+
+    const Human = union(enum) {
+        royalty,
+        peasant,
+        guard: Guard,
+
+        const Guard = enum { gate, patrol };
+    };
+};
+
+test {
     _ = Entity;
 
-    comptime for (everyEnumUnionPermutation(EnumUnionSubVariantLut(Entity, 2))) |tag| {
-        @compileLog(@intToEnum(FlattenedEnumUnion(Entity), @enumToInt(tag)), "->".*, tag);
-    };
+    std.debug.print("\n", .{});
+    _ = flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } });
+    // try std.testing.expectEqual(flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }), .human_guard_patrol);
 }
 
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
