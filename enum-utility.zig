@@ -84,50 +84,57 @@ pub fn FlattenedEnumUnion(comptime EnumUnion: type) type {
 }
 
 pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
-    const name_separator = "_".*;
+    // const name_separator = "_".*;
 
     const EnumUnion = @TypeOf(enum_union);
     const Flattened = FlattenedEnumUnion(EnumUnion);
 
     const lut = comptime lut: {
         var lut: []const Flattened = &.{};
-        for (everyEnumUnionPermutation()) |permutation| {
+        for (everyEnumUnionPermutation(EnumUnion)) |permutation| {
+            const flattened = flattenEnumUnionPermutation(permutation);
             const hash = enumUnionHash(permutation);
+            const added_len = (lut.len + 1) - hash;
+            var new_lut = (lut ++ ([_]Flattened{undefined} ** added_len))[0 .. lut.len + added_len].*;
+            new_lut[hash] = flattened;
+            lut = &new_lut;
         }
-        break :lut lut[0..].*;
+        break :lut lut[0..lut.len].*;
     };
 
-    inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
-        if (enum_union == tag) {
-            const tag_name = @tagName(tag);
-            const field_value = @field(enum_union, tag_name);
-            const FieldType = @TypeOf(field_value);
-            switch (@typeInfo(FieldType)) {
-                .Void => return @field(Flattened, @tagName(tag)),
-                .Enum => {
-                    const lut = comptime lut: {
-                        var lut = std.EnumArray(FieldType, Flattened).initUndefined();
-                        for (std.enums.values(FieldType)) |subtag| {
-                            lut.set(subtag, @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag)));
-                        }
-                        break :lut lut;
-                    };
-                    return lut.get(field_value);
-                },
-                .Union => {
-                    const flattened = flattenEnumUnion(field_value);
-                    inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |subtag| {
-                        if (flattened == subtag) {
-                            return @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
-                        }
-                    }
-                },
-                else => unreachable,
-            }
-        }
-    }
+    return lut[enumUnionHash(enum_union)];
 
-    unreachable;
+    // inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
+    //     if (enum_union == tag) {
+    //         const tag_name = @tagName(tag);
+    //         const field_value = @field(enum_union, tag_name);
+    //         const FieldType = @TypeOf(field_value);
+    //         switch (@typeInfo(FieldType)) {
+    //             .Void => return @field(Flattened, @tagName(tag)),
+    //             .Enum => {
+    //                 const lut = comptime lut: {
+    //                     var lut = std.EnumArray(FieldType, Flattened).initUndefined();
+    //                     for (std.enums.values(FieldType)) |subtag| {
+    //                         lut.set(subtag, @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag)));
+    //                     }
+    //                     break :lut lut;
+    //                 };
+    //                 return lut.get(field_value);
+    //             },
+    //             .Union => {
+    //                 const flattened = flattenEnumUnion(field_value);
+    //                 inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |subtag| {
+    //                     if (flattened == subtag) {
+    //                         return @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
+    //                     }
+    //                 }
+    //             },
+    //             else => unreachable,
+    //         }
+    //     }
+    // }
+    //
+    // unreachable;
 }
 
 pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
@@ -180,28 +187,40 @@ fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(
     };
 }
 
-fn enumUnionHash(enum_union: anytype) u64 {
+noinline fn enumUnionHash(enum_union: anytype) u64 {
     const EnumUnion = @TypeOf(enum_union);
-    _ = FlattenedEnumUnion(EnumUnion);
+    // const Flattened = FlattenedEnumUnion(EnumUnion);
     var hash: u64 = 0;
 
-    comptime var i = 0;
     inline for (std.meta.fields(EnumUnion)) |field| {
         switch (@typeInfo(field.field_type)) {
             .Void => {
-                comptime i += 1;
-                hash += i * @boolToInt(@field(std.meta.Tag(Entity), field.name) == enum_union);
+                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
+                    return hash;
+                }
+                hash += 1;
             },
             .Enum => {
-                comptime i += std.meta.fields(field.field_type).len;
-                hash += i * @boolToInt(@field(std.meta.Tag(Entity), field.name) == enum_union);
+                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
+                    const field_value = @field(enum_union, field.name);
+                    inline for (comptime std.enums.values(field.field_type)) |tag| {
+                        if (field_value == tag) {
+                            return hash;
+                        }
+                        hash += 1;
+                    }
+                }
+                hash += comptime std.meta.fields(field.field_type).len;
             },
             .Union => {
-                comptime i += std.meta.fields(FlattenedEnumUnion(field.field_type)).len;
-                const is_eql = @field(std.meta.Tag(Entity), field.name) == enum_union;
-                hash += i * @boolToInt(is_eql);
-                hash += if (is_eql) enumUnionHash(@field(enum_union, field.name)) else 0;
+                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
+                    const field_value = @field(enum_union, field.name);
+                    hash += enumUnionHash(field_value);
+                    return hash;
+                }
+                hash += comptime std.meta.fields(FlattenedEnumUnion(field.field_type)).len;
             },
+            else => unreachable,
         }
     }
 
