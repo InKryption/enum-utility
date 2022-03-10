@@ -1,355 +1,144 @@
 const std = @import("std");
-
-pub fn flattenedEnumUnionFieldCount(comptime EnumUnion: type) comptime_int {
-    comptime {
-        var field_num: comptime_int = 0;
-        for (@typeInfo(EnumUnion).Union.fields) |field_info| {
-            switch (@typeInfo(field_info.field_type)) {
-                .Void => field_num += 1,
-                .Enum => field_num += std.meta.fields(field_info.field_type).len,
-                .Union => field_num += flattenedEnumUnionFieldCount(field_info.field_type),
-                else => unreachable,
-            }
-        }
-        return field_num;
-    }
-}
-
-/// Expects a tagged union type, whose fields are all either void, an enum, or a union which meets the former
-/// two constraints, or the third of these constraints, recursively. The resulting type with be an enum,
-/// whose fields are all flattened versions of the possible state combinations.
-///
-/// So given an input type, with field written as
-/// ```
-/// monster: enum { slime, goblin, troll },
-/// ```
-/// using default configuration, the resulting type would include fields named: 
-/// * `monster_slime`
-/// * `monster_goblin`
-/// * `monster_troll`
-///
-/// This also then applies recursively to fields which are union types,
-/// so given an input type, with a field written as
-/// ```
-/// human: union(enum) { royal, citizen: Citizen },
-/// const Citizen = enum { peasant, artisan };
-/// ```
-/// using default configuration, the resulting type would include fields named:
-/// * `human_royal`
-/// * `human_citizen_peasant`
-/// * `human_citizen_artisan`
-pub fn FlattenedEnumUnion(comptime EnumUnion: type) type {
-    const name_separator = "_".*;
-
-    std.debug.assert(std.meta.trait.is(.Array)(@TypeOf(name_separator)));
-    std.debug.assert(std.meta.Child(@TypeOf(name_separator)) == u8);
-
-    @setEvalBranchQuota(1000 + 1000 * std.meta.fields(EnumUnion).len);
-    var new_fields: []const std.builtin.TypeInfo.EnumField = &.{};
-
-    for (@typeInfo(EnumUnion).Union.fields) |field_info| {
-        switch (@typeInfo(field_info.field_type)) {
-            .Void => {
-                new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
-                    .name = field_info.name,
-                    .value = new_fields.len,
-                }};
-            },
-            .Enum, .Union => {
-                const enum_fields: []const std.builtin.TypeInfo.EnumField = switch (@typeInfo(field_info.field_type)) {
-                    .Enum => std.meta.fields(field_info.field_type),
-                    .Union => std.meta.fields(FlattenedEnumUnion(field_info.field_type)),
-                    else => unreachable,
-                };
-
-                @setEvalBranchQuota(enum_fields.len);
-                for (enum_fields) |enum_field_info| {
-                    new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
-                        .name = field_info.name ++ name_separator ++ enum_field_info.name,
-                        .value = new_fields.len,
-                    }};
-                }
-            },
-            else => unreachable,
-        }
-    }
-
-    return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
-        .layout = .Auto,
-        .tag_type = std.meta.Int(.unsigned, new_fields.len),
-        .fields = new_fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    }));
-}
-
-pub fn flattenEnumUnion(enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
-    // const name_separator = "_".*;
-
-    const EnumUnion = @TypeOf(enum_union);
-    const Flattened = FlattenedEnumUnion(EnumUnion);
-
-    const lut = comptime lut: {
-        var lut: []const Flattened = &.{};
-        for (everyEnumUnionPermutation(EnumUnion)) |permutation| {
-            const flattened = flattenEnumUnionPermutation(permutation);
-            const hash = enumUnionHash(permutation);
-            const added_len = (lut.len + 1) - hash;
-            var new_lut = (lut ++ ([_]Flattened{undefined} ** added_len))[0 .. lut.len + added_len].*;
-            new_lut[hash] = flattened;
-            lut = &new_lut;
-        }
-        break :lut lut[0..lut.len].*;
-    };
-
-    return lut[enumUnionHash(enum_union)];
-
-    // inline for (comptime std.enums.values(std.meta.Tag(EnumUnion))) |tag| {
-    //     if (enum_union == tag) {
-    //         const tag_name = @tagName(tag);
-    //         const field_value = @field(enum_union, tag_name);
-    //         const FieldType = @TypeOf(field_value);
-    //         switch (@typeInfo(FieldType)) {
-    //             .Void => return @field(Flattened, @tagName(tag)),
-    //             .Enum => {
-    //                 const lut = comptime lut: {
-    //                     var lut = std.EnumArray(FieldType, Flattened).initUndefined();
-    //                     for (std.enums.values(FieldType)) |subtag| {
-    //                         lut.set(subtag, @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag)));
-    //                     }
-    //                     break :lut lut;
-    //                 };
-    //                 return lut.get(field_value);
-    //             },
-    //             .Union => {
-    //                 const flattened = flattenEnumUnion(field_value);
-    //                 inline for (comptime std.enums.values(FlattenedEnumUnion(FieldType))) |subtag| {
-    //                     if (flattened == subtag) {
-    //                         return @field(Flattened, @tagName(tag) ++ name_separator ++ @tagName(subtag));
-    //                     }
-    //                 }
-    //             },
-    //             else => unreachable,
-    //         }
-    //     }
-    // }
-    //
-    // unreachable;
-}
-
-pub fn unflattenEnumUnion(comptime EnumUnion: type, flattened: FlattenedEnumUnion(EnumUnion)) EnumUnion {
-    const Flattened = FlattenedEnumUnion(EnumUnion);
-    const Lut = std.EnumArray(Flattened, EnumUnion);
-    const lut: Lut = comptime lut: {
-        var lut = Lut.initUndefined();
-        for (everyEnumUnionPermutation(EnumUnion)) |permutation| {
-            lut.set(flattenEnumUnionPermutation(permutation), permutation);
-        }
-        break :lut lut;
-    };
-    return lut.get(flattened);
-}
-
-fn everyEnumUnionPermutation(comptime EnumUnion: type) *const [std.meta.fields(FlattenedEnumUnion(EnumUnion)).len]EnumUnion {
-    comptime {
-        var result: []const EnumUnion = &.{};
-        for (@as([]const std.builtin.TypeInfo.UnionField, std.meta.fields(EnumUnion))) |base_field| {
-            switch (@typeInfo(base_field.field_type)) {
-                .Void => {
-                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, void{})};
-                },
-                .Enum => for (std.enums.values(base_field.field_type)) |base_field_value| {
-                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, base_field_value)};
-                },
-                .Union => for (everyEnumUnionPermutation(base_field.field_type)) |base_field_value| {
-                    result = result ++ [_]EnumUnion{@unionInit(EnumUnion, base_field.name, base_field_value)};
-                },
-                else => unreachable,
-            }
-        }
-        return result[0..result.len];
-    }
-}
-
-fn flattenEnumUnionPermutation(comptime enum_union: anytype) FlattenedEnumUnion(@TypeOf(enum_union)) {
-    const name_separator = "_".*;
-
-    const EnumUnion = @TypeOf(enum_union);
-    const Flattened = FlattenedEnumUnion(EnumUnion);
-
-    const field_value = @field(enum_union, @tagName(enum_union));
-    const FieldType = @TypeOf(field_value);
-    return switch (@typeInfo(FieldType)) {
-        .Void => @field(Flattened, @tagName(enum_union)),
-        .Enum => @field(Flattened, @tagName(enum_union) ++ name_separator ++ @tagName(field_value)),
-        .Union => @field(Flattened, @tagName(enum_union) ++ name_separator ++ @tagName(flattenEnumUnionPermutation(field_value))),
-        else => unreachable,
-    };
-}
-
-noinline fn enumUnionHash(enum_union: anytype) u64 {
-    const EnumUnion = @TypeOf(enum_union);
-    // const Flattened = FlattenedEnumUnion(EnumUnion);
-    var hash: u64 = 0;
-
-    inline for (std.meta.fields(EnumUnion)) |field| {
-        switch (@typeInfo(field.field_type)) {
-            .Void => {
-                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
-                    return hash;
-                }
-                hash += 1;
-            },
-            .Enum => {
-                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
-                    const field_value = @field(enum_union, field.name);
-                    inline for (comptime std.enums.values(field.field_type)) |tag| {
-                        if (field_value == tag) {
-                            return hash;
-                        }
-                        hash += 1;
-                    }
-                }
-                hash += comptime std.meta.fields(field.field_type).len;
-            },
-            .Union => {
-                if (enum_union == @field(std.meta.Tag(EnumUnion), field.name)) {
-                    const field_value = @field(enum_union, field.name);
-                    hash += enumUnionHash(field_value);
-                    return hash;
-                }
-                hash += comptime std.meta.fields(FlattenedEnumUnion(field.field_type)).len;
-            },
-            else => unreachable,
-        }
-    }
-
-    return hash;
-}
-
-const Entity = union(enum) {
-    alien,
-    monster: Monster,
-    human: Human,
-
-    const Monster = enum {
-        slime,
-        goblin,
-        troll,
-    };
-
-    const Human = union(enum) {
-        royalty,
-        peasant,
-        guard: Guard,
-
-        const Guard = enum { gate, patrol };
-    };
-};
-
-var ent: Entity = undefined;
-
-noinline fn initEnt() void {
-    ent = if (std.rand.DefaultPrng.init(0).random().boolean()) Entity{ .human = .{ .guard = .patrol } } else Entity{ .human = .royalty };
-}
-
-export fn foo1() usize {
-    initEnt();
-    return switch (flattenEnumUnion(ent)) {
-        flattenEnumUnion(Entity{ .alien = {} }) => 0,
-
-        flattenEnumUnion(Entity{ .monster = .slime }) => 1,
-        flattenEnumUnion(Entity{ .monster = .goblin }) => 2,
-        flattenEnumUnion(Entity{ .monster = .troll }) => 3,
-
-        flattenEnumUnion(Entity{ .human = .royalty }) => 4,
-        flattenEnumUnion(Entity{ .human = .peasant }) => 5,
-        flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }) => 6,
-        flattenEnumUnion(Entity{ .human = .{ .guard = .gate } }) => 7,
-    };
-}
-
-export fn foo2() usize {
-    initEnt();
-    const local_ent = ent;
-    return switch (local_ent) {
-        .alien => @as(usize, 0),
-        .monster => |monster| @as(usize, switch (monster) {
-            .slime => 1,
-            .goblin => 2,
-            .troll => 3,
-        }),
-        .human => |human| switch (human) {
-            .royalty => 4,
-            .peasant => 5,
-            .guard => |guard| @as(usize, switch (guard) {
-                .patrol => 6,
-                .gate => 7,
-            }),
-        },
-    };
-}
-
-test {
-    _ = Entity;
-
-    std.debug.print("\n", .{});
-    _ = flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } });
-    try std.testing.expectEqual(flattenEnumUnion(Entity{ .human = .{ .guard = .patrol } }), .human_guard_patrol);
-}
+const builtin = @import("builtin");
 
 pub fn combinedEnumsFieldCount(comptime A: type, comptime B: type) comptime_int {
     return @typeInfo(A).Enum.fields.len * @typeInfo(B).Enum.fields.len;
 }
 
 pub fn CombinedEnums(comptime A: type, comptime B: type) type {
-    const name_separator = "_";
-    var new_fields: []const std.builtin.TypeInfo.EnumField = &.{};
+    comptime {
+        const name_separator = "_";
+        var new_fields: []const std.builtin.TypeInfo.EnumField = &[_]std.builtin.TypeInfo.EnumField{};
 
-    for (@typeInfo(A).Enum.fields) |field_info_a| {
-        for (@typeInfo(B).Enum.fields) |field_info_b| {
-            new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
-                .name = field_info_a.name ++ name_separator ++ field_info_b.name,
-                .value = new_fields.len,
-            }};
+        for (@typeInfo(A).Enum.fields) |field_a| {
+            const a = @field(A, field_a.name);
+            for (@typeInfo(B).Enum.fields) |field_b| {
+                const b = @field(B, field_b.name);
+
+                const tag = if (A == u0 and B == u0) 0 else combinedEnumsTag(a, b);
+                new_fields = new_fields ++ [_]std.builtin.TypeInfo.EnumField{.{
+                    .name = @tagName(a) ++ name_separator ++ @tagName(b),
+                    .value = tag,
+                }};
+            }
         }
-    }
 
-    return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
-        .layout = .Auto,
-        .tag_type = std.meta.Int(.unsigned, new_fields.len - 1),
-        .fields = new_fields,
-        .decls = &.{},
-        .is_exhaustive = true,
-    }));
+        return @Type(@unionInit(std.builtin.TypeInfo, "Enum", std.builtin.TypeInfo.Enum{
+            .layout = .Auto,
+            .tag_type = CombinedEnumsTag(A, B),
+            .fields = new_fields,
+            .decls = &[_]std.builtin.TypeInfo.Declaration{},
+            .is_exhaustive = true,
+        }));
+    }
 }
 
 pub fn combineEnums(a: anytype, b: anytype) CombinedEnums(@TypeOf(a), @TypeOf(b)) {
-    return combineEnumsTemplate(@TypeOf(a), @TypeOf(b))(a, b);
+    const Combined = CombinedEnums(@TypeOf(a), @TypeOf(b));
+    return @intToEnum(Combined, combinedEnumsTag(a, b));
 }
 
 pub fn combineEnumsTemplate(comptime A: type, comptime B: type) (fn (A, B) CombinedEnums(A, B)) {
-    const name_separator = "_";
-
-    const Combined = CombinedEnums(A, B);
-    const Lut = std.EnumArray(A, std.EnumArray(B, Combined));
-
-    const lut: Lut = comptime lut: {
-        var lut = Lut.initUndefined();
-        for (std.enums.values(A)) |tag_a| {
-            for (std.enums.values(B)) |tag_b| {
-                const combined_tag = @field(Combined, @tagName(tag_a) ++ name_separator ++ @tagName(tag_b));
-                lut.getPtr(tag_a).set(tag_b, combined_tag);
-            }
-        }
-        break :lut lut;
-    };
-
     return comptime struct {
-        fn combineEnums(a: A, b: B) Combined {
-            return lut.get(a).get(b);
+        fn combineEnumsFn(a: A, b: B) CombinedEnums(A, B) {
+            return combineEnums(a, b);
         }
-    }.combineEnums;
+    }.combineEnumsFn;
+}
+
+fn CombinedEnumsTag(comptime A: type, comptime B: type) type {
+    const TagA = @typeInfo(A).Enum.tag_type;
+    const bits_a = @typeInfo(TagA).Int.bits;
+
+    const TagB = @typeInfo(B).Enum.tag_type;
+    const bits_b = @typeInfo(TagB).Int.bits;
+
+    return std.meta.Int(.unsigned, bits_a + bits_b);
+}
+
+inline fn combinedEnumsTag(a: anytype, b: anytype) CombinedEnumsTag(@TypeOf(a), @TypeOf(b)) {
+    const A = @TypeOf(a);
+    const B = @TypeOf(b);
+    const Combined = CombinedEnumsTag(A, B);
+
+    const TagA = @typeInfo(A).Enum.tag_type;
+    const TagB = @typeInfo(B).Enum.tag_type;
+
+    const bits_a = @typeInfo(TagA).Int.bits;
+    const bits_b = @typeInfo(TagB).Int.bits;
+
+    const UnsignedA = std.meta.Int(.unsigned, bits_a);
+    const UnsignedB = std.meta.Int(.unsigned, bits_b);
+
+    if (comptime bits_a == 0 and bits_b == 0) {
+        switch (comptime builtin.zig_backend) {
+            .stage1 => @compileError(
+                \\Note: A compiler bug makes it impossible to support combining two enums which both have 0 bit
+                \\backing integers, so we'll have to wait until stage2 to see if its fixed.
+            ),
+            .stage2_llvm,
+            .stage2_c,
+            .stage2_wasm,
+            .stage2_arm,
+            .stage2_x86_64,
+            .stage2_aarch64,
+            .stage2_x86,
+            .stage2_riscv64,
+            => @compileError(
+                \\Either remove this code, or change this message to indicate the code still doesn't work
+                \\for the given backend.
+            ),
+            .other => {},
+            _ => {},
+        }
+        return 0;
+    }
+
+    if (comptime bits_a == 0 and bits_b != 0) return @bitCast(UnsignedB, @enumToInt(b));
+    if (comptime bits_a != 0 and bits_b == 0) return @bitCast(UnsignedA, @enumToInt(a));
+
+    const a_min = comptime @enumToInt(enumMinMax(A).min);
+    const b_min = comptime @enumToInt(enumMinMax(B).min);
+
+    const tag_a: Combined = @bitCast(UnsignedA, @enumToInt(a));
+    const tag_b: Combined = @bitCast(UnsignedB, @enumToInt(b));
+
+    return ((tag_a - a_min) << bits_b) | (tag_b - b_min);
+}
+
+fn enumMinMax(comptime Enum: type) struct { min: Enum, max: Enum } {
+    const lessThan = comptime struct {
+        fn lessThan(context: void, lhs: Enum, rhs: Enum) bool {
+            _ = context;
+            return std.math.order(@enumToInt(lhs), @enumToInt(rhs)) == .lt;
+        }
+    }.lessThan;
+    const values = comptime std.enums.values(Enum);
+    return .{
+        .min = values[std.sort.argMin(Enum, values, void{}, lessThan).?],
+        .max = values[std.sort.argMax(Enum, values, void{}, lessThan).?],
+    };
+}
+
+inline fn combinedEnumsATag(comptime A: type, comptime B: type, combined: CombinedEnums(A, B)) std.meta.Tag(A) {
+    const TagA = @typeInfo(A).Enum.tag_type;
+
+    const TagB = @typeInfo(B).Enum.tag_type;
+    const bits_b = @typeInfo(TagB).Int.bits;
+
+    const a_min = comptime @enumToInt(enumMinMax(A).min);
+
+    const tag = @enumToInt(combined);
+    return @truncate(TagA, (tag >> bits_b) + a_min);
+}
+
+inline fn combinedEnumsBTag(comptime A: type, comptime B: type, combined: CombinedEnums(A, B)) std.meta.Tag(B) {
+    const TagB = @typeInfo(B).Enum.tag_type;
+
+    const b_min = comptime @enumToInt(enumMinMax(B).min);
+
+    const tag = @enumToInt(combined);
+    return @truncate(TagB, tag) + b_min;
 }
 
 pub const SplitCombinedEnumComponents = enum { a, b, both };
@@ -362,60 +151,99 @@ pub fn splitCombinedEnumTemplate(
     .b => B,
     .both => std.meta.ArgsTuple(@TypeOf(combineEnumsTemplate(A, B))),
 } {
-    const name_separator = "_";
-
+    const Combined = CombinedEnums(A, B);
     const ReturnType = switch (split) {
         .a => A,
         .b => B,
         .both => std.meta.ArgsTuple(@TypeOf(combineEnumsTemplate(A, B))),
     };
 
-    const Combined = CombinedEnums(A, B);
-    const Lut = std.EnumArray(Combined, ReturnType);
+    // const TagA = @typeInfo(A).Enum.tag_type;
+    // const TagB = @typeInfo(B).Enum.tag_type;
 
-    const lut: Lut = comptime lut: {
-        var lut = Lut.initUndefined();
-        for (std.enums.values(A)) |tag_a| {
-            for (std.enums.values(B)) |tag_b| {
-                const combined_tag = @field(Combined, @tagName(tag_a) ++ name_separator ++ @tagName(tag_b));
-                lut.set(combined_tag, switch (split) {
-                    .a => tag_a,
-                    .b => tag_b,
-                    .both => .{ tag_a, tag_b },
-                });
-            }
-        }
-        break :lut lut;
-    };
+    // const bits_a = @typeInfo(TagA).Int.bits;
+    // const bits_b = @typeInfo(TagB).Int.bits;
 
     return comptime struct {
-        fn splitCombinedEnum(combined: CombinedEnums(A, B)) ReturnType {
-            return lut.get(combined);
+        fn splitCombinedEnum(combined: Combined) ReturnType {
+            switch (comptime split) {
+                .a => return @intToEnum(A, combinedEnumsATag(A, B, combined)),
+                .b => return @intToEnum(B, combinedEnumsBTag(A, B, combined)),
+                .both => return .{
+                    @intToEnum(A, combinedEnumsATag(A, B, combined)),
+                    @intToEnum(B, combinedEnumsBTag(A, B, combined)),
+                },
+            }
         }
     }.splitCombinedEnum;
 }
 
+const Direction = enum(u8) { north = 255, east = 33, south = 29, west = 11 };
+const Rotation = enum(u8) { clockwise, anticlockwise };
+
+export fn directionPlusRotation2(d: Direction, r: Rotation) Direction {
+    const k = comptime combineEnumsTemplate(Direction, Rotation);
+    return switch (k(d, r)) {
+        k(.north, .clockwise) => .east,
+        k(.north, .anticlockwise) => .west,
+
+        k(.east, .clockwise) => .south,
+        k(.east, .anticlockwise) => .north,
+
+        k(.south, .clockwise) => .west,
+        k(.south, .anticlockwise) => .east,
+
+        k(.west, .clockwise) => .north,
+        k(.west, .anticlockwise) => .south,
+    };
+}
+
+export fn directionPlusRotation1(d: Direction, r: Rotation) Direction {
+    return switch (d) {
+        .north => @as(Direction, switch (r) {
+            .clockwise => .east,
+            .anticlockwise => .west,
+        }),
+        .east => @as(Direction, switch (r) {
+            .clockwise => .south,
+            .anticlockwise => .north,
+        }),
+        .south => @as(Direction, switch (r) {
+            .clockwise => .west,
+            .anticlockwise => .east,
+        }),
+        .west => @as(Direction, switch (r) {
+            .clockwise => .north,
+            .anticlockwise => .south,
+        }),
+    };
+}
+
 test "combineEnums" {
-    const Foo = enum { foo };
-    const Bar = enum { bar };
-    const combineFooBar = combineEnumsTemplate(Foo, Bar);
-    const splitFooBar = splitCombinedEnumTemplate(Foo, Bar, .both);
+    const Combined = CombinedEnums(Direction, Rotation);
 
-    const getFoo = splitCombinedEnumTemplate(Foo, Bar, .a);
-    const getBar = splitCombinedEnumTemplate(Foo, Bar, .b);
+    const combineDirRot = comptime combineEnumsTemplate(Direction, Rotation);
 
-    try std.testing.expectEqual(combineFooBar(.foo, .bar), @call(.{}, combineEnums, splitFooBar(combineFooBar(.foo, .bar))));
-    try std.testing.expectEqual(combineFooBar(.foo, .bar), combineFooBar(getFoo(combineFooBar(.foo, .bar)), getBar(combineFooBar(.foo, .bar))));
-    try std.testing.expectEqual(Foo.foo, getFoo(combineFooBar(.foo, .bar)));
-    try std.testing.expectEqual(Bar.bar, getBar(combineFooBar(.foo, .bar)));
+    const getBoth = comptime splitCombinedEnumTemplate(Direction, Rotation, .both);
+    const getDir = comptime splitCombinedEnumTemplate(Direction, Rotation, .a);
+    const getRot = comptime splitCombinedEnumTemplate(Direction, Rotation, .b);
 
-    // const Fizz = enum { fizz };
-    // const Buzz = enum { buzz };
-    // const combineFizzBuzz = combineEnumsTemplate(Fizz, Buzz, .{ .optionality = .all_optional });
-    // try std.testing.expectEqualStrings("fizz", @tagName(combineFizzBuzz(.fizz, null).?));
-    // try std.testing.expectEqualStrings("fizz_buzz", @tagName(combineFizzBuzz(.fizz, .buzz).?));
-    // try std.testing.expectEqualStrings("buzz", @tagName(combineFizzBuzz(null, .buzz).?));
-    // try std.testing.expectEqual(@as(?CombinedEnums(Fizz, Buzz, .{ .optionality = .all_optional }), null), combineFizzBuzz(null, null));
+    for (std.enums.values(Direction)) |expected_d| {
+        for (std.enums.values(Rotation)) |expected_r| {
+            const combined = combineDirRot(expected_d, expected_r);
+            const actual_d = getDir(combined);
+            const actual_r = getRot(combined);
+
+            try std.testing.expectEqual(expected_r, actual_r);
+            try std.testing.expectEqual(expected_d, actual_d);
+
+            try std.testing.expectEqual(combineDirRot(expected_d, expected_r), combined);
+            try std.testing.expectEqual(combined, @call(.{}, combineDirRot, getBoth(combined)));
+        }
+    }
+
+    comptime try std.testing.expect(@hasField(Combined, "north_clockwise"));
+    try std.testing.expectEqual(Combined.north_clockwise, combineDirRot(.north, .clockwise));
 }
 
 /// Attempts to cast an enum to another enum, by name. Returns null
