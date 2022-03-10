@@ -106,7 +106,7 @@ inline fn combinedEnumsTag(a: anytype, b: anytype) CombinedEnumsTag(@TypeOf(a), 
     return ((tag_a - a_min) << bits_b) | (tag_b - b_min);
 }
 
-fn enumMinMax(comptime Enum: type) struct { min: Enum, max: Enum } {
+inline fn enumMinMax(comptime Enum: type) struct { min: Enum, max: Enum } {
     const lessThan = comptime struct {
         fn lessThan(context: void, lhs: Enum, rhs: Enum) bool {
             _ = context;
@@ -122,10 +122,9 @@ fn enumMinMax(comptime Enum: type) struct { min: Enum, max: Enum } {
 
 inline fn combinedEnumsATag(comptime A: type, comptime B: type, combined: CombinedEnums(A, B)) std.meta.Tag(A) {
     const TagA = @typeInfo(A).Enum.tag_type;
-
     const TagB = @typeInfo(B).Enum.tag_type;
-    const bits_b = @typeInfo(TagB).Int.bits;
 
+    const bits_b = @typeInfo(TagB).Int.bits;
     const a_min = comptime @enumToInt(enumMinMax(A).min);
 
     const tag = @enumToInt(combined);
@@ -158,12 +157,6 @@ pub fn splitCombinedEnumTemplate(
         .both => std.meta.ArgsTuple(@TypeOf(combineEnumsTemplate(A, B))),
     };
 
-    // const TagA = @typeInfo(A).Enum.tag_type;
-    // const TagB = @typeInfo(B).Enum.tag_type;
-
-    // const bits_a = @typeInfo(TagA).Int.bits;
-    // const bits_b = @typeInfo(TagB).Int.bits;
-
     return comptime struct {
         fn splitCombinedEnum(combined: Combined) ReturnType {
             switch (comptime split) {
@@ -178,48 +171,9 @@ pub fn splitCombinedEnumTemplate(
     }.splitCombinedEnum;
 }
 
-const Direction = enum(u8) { north = 255, east = 33, south = 29, west = 11 };
-const Rotation = enum(u8) { clockwise, anticlockwise };
-
-export fn directionPlusRotation2(d: Direction, r: Rotation) Direction {
-    const k = comptime combineEnumsTemplate(Direction, Rotation);
-    return switch (k(d, r)) {
-        k(.north, .clockwise) => .east,
-        k(.north, .anticlockwise) => .west,
-
-        k(.east, .clockwise) => .south,
-        k(.east, .anticlockwise) => .north,
-
-        k(.south, .clockwise) => .west,
-        k(.south, .anticlockwise) => .east,
-
-        k(.west, .clockwise) => .north,
-        k(.west, .anticlockwise) => .south,
-    };
-}
-
-export fn directionPlusRotation1(d: Direction, r: Rotation) Direction {
-    return switch (d) {
-        .north => @as(Direction, switch (r) {
-            .clockwise => .east,
-            .anticlockwise => .west,
-        }),
-        .east => @as(Direction, switch (r) {
-            .clockwise => .south,
-            .anticlockwise => .north,
-        }),
-        .south => @as(Direction, switch (r) {
-            .clockwise => .west,
-            .anticlockwise => .east,
-        }),
-        .west => @as(Direction, switch (r) {
-            .clockwise => .north,
-            .anticlockwise => .south,
-        }),
-    };
-}
-
 test "combineEnums" {
+    const Direction = enum(u8) { north = 255, east = 33, south = 29, west = 11 };
+    const Rotation = enum(u8) { clockwise, anticlockwise };
     const Combined = CombinedEnums(Direction, Rotation);
 
     const combineDirRot = comptime combineEnumsTemplate(Direction, Rotation);
