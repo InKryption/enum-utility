@@ -11,12 +11,12 @@ pub fn CombinedEnums(comptime A: type, comptime B: type) type {
 
     const TagNamespace = CombinedEnumsTagNamespace(A, B);
 
-    std.debug.assert(TagNamespace.info_a.is_exhaustive);
-    std.debug.assert(TagNamespace.info_b.is_exhaustive);
+    std.debug.assert(TagNamespace.util_a.info.is_exhaustive);
+    std.debug.assert(TagNamespace.util_b.info.is_exhaustive);
 
-    for (TagNamespace.info_a.fields) |field_a| {
+    for (TagNamespace.util_a.info.fields) |field_a| {
         const a = @field(A, field_a.name);
-        for (TagNamespace.info_b.fields) |field_b| {
+        for (TagNamespace.util_b.info.fields) |field_b| {
             const b = @field(B, field_b.name);
 
             const tag = TagNamespace.tagCombined(a, b);
@@ -36,18 +36,23 @@ pub fn CombinedEnums(comptime A: type, comptime B: type) type {
     }));
 }
 
-pub noinline fn combineEnums(a: anytype, b: anytype) CombinedEnums(@TypeOf(a), @TypeOf(b)) {
+pub fn combineEnums(a: anytype, b: anytype) CombinedEnums(@TypeOf(a), @TypeOf(b)) {
     const A = @TypeOf(a);
     const B = @TypeOf(b);
+    const Combined = CombinedEnums(A, B);
     const TagNamespace = CombinedEnumsTagNamespace(A, B);
 
     // TODO: Remove this once casting to `u0` works.
     // This is a work around for casting 0 to `u0` crashing the compiler
     comptime if (TagNamespace.TagCombined == u0) {
-        return std.enums.values(CombinedEnums(A, B))[0];
+        return @field(Combined, @typeInfo(Combined).Enum.fields[0].name);
     };
 
-    return @intToEnum(CombinedEnums(A, B), TagNamespace.tagCombined(a, b));
+    comptime if (@typeInfo(Combined).Enum.fields.len == 1) {
+        return @field(Combined, @typeInfo(Combined).Enum.fields[0].name);
+    };
+
+    return @intToEnum(Combined, TagNamespace.tagCombined(a, b));
 }
 
 pub fn combineEnumsTemplate(comptime A: type, comptime B: type) (fn (A, B) CombinedEnums(A, B)) {
@@ -58,92 +63,76 @@ pub fn combineEnumsTemplate(comptime A: type, comptime B: type) (fn (A, B) Combi
     }.combineEnumsFn;
 }
 
+fn EnumUtilNamespace(comptime Enum: type) type {
+    return struct {
+        const info: std.builtin.Type.Enum = @typeInfo(Enum).Enum;
+
+        const Tag: type = info.tag_type;
+        const bits: u16 = @typeInfo(Tag).Int.bits;
+
+        const TagSigned: type = std.meta.Int(.signed, bits);
+        const TagUnsigned: type = std.meta.Int(.unsigned, bits);
+
+        const values: [info.fields.len]Enum = std.enums.values(Enum)[0..info.fields.len].*;
+        const values_vec: @Vector(info.fields.len, Tag) = @bitCast(@Vector(info.fields.len, Tag), values);
+
+        const value_min: Enum = @intToEnum(Enum, @reduce(.Min, values_vec));
+        const value_max: Enum = @intToEnum(Enum, @reduce(.Max, values_vec));
+
+        const AscIndex = std.math.IntFittingRange(0, info.fields.len - 1);
+        /// Returns an index such that `tag == values_ascending[ascIndex(tag)]`.
+        fn ascIndex(tag: Enum) AscIndex {
+            var result: AscIndex = 0;
+            inline for (values) |possible_tag| {
+                result += @boolToInt((@enumToInt(tag) - @enumToInt(value_min)) > (@enumToInt(possible_tag) - @enumToInt(value_min)));
+            }
+            return result;
+        }
+    };
+}
+
 fn CombinedEnumsTagNamespace(comptime A: type, comptime B: type) type {
     return struct {
-        const info_a: std.builtin.TypeInfo.Enum = @typeInfo(A).Enum;
-        const info_b: std.builtin.TypeInfo.Enum = @typeInfo(B).Enum;
-
-        const TagA = info_a.tag_type;
-        const TagB = info_b.tag_type;
-
-        const bits_a = @typeInfo(TagA).Int.bits;
-        const bits_b = @typeInfo(TagB).Int.bits;
-
-        const UnsignedA = std.meta.Int(.unsigned, bits_a);
-        const UnsignedB = std.meta.Int(.unsigned, bits_b);
-
-        const TagCombined = std.meta.Int(.unsigned, bits_a + bits_b);
-
-        const values_a: *const [info_a.fields.len]A = std.enums.values(A)[0..info_a.fields.len];
-        const values_b: *const [info_b.fields.len]B = std.enums.values(B)[0..info_b.fields.len];
-
-        const asc_values_a: *const [info_a.fields.len]A = asc_values_a: {
-            var asc_values: [info_a.fields.len]A = values_a.*;
-            @setEvalBranchQuota(std.math.min(std.math.maxInt(u32), 1000 + asc_values.len));
-
-            std.sort.sort(A, &asc_values, void{}, struct {
-                fn lessThan(context: void, lhs: A, rhs: A) bool {
-                    _ = context;
-                    return @enumToInt(lhs) < @enumToInt(rhs);
-                }
-            }.lessThan);
-
-            break :asc_values_a &asc_values;
-        };
-        const asc_values_b: *const [info_b.fields.len]B = asc_values_b: {
-            var asc_values: [info_b.fields.len]B = values_b.*;
-            @setEvalBranchQuota(std.math.min(std.math.maxInt(u32), 1000 + asc_values.len));
-
-            std.sort.sort(B, &asc_values, void{}, struct {
-                fn lessThan(context: void, lhs: B, rhs: B) bool {
-                    _ = context;
-                    return @enumToInt(lhs) < @enumToInt(rhs);
-                }
-            }.lessThan);
-
-            break :asc_values_b &asc_values;
-        };
-
-        const min_a = asc_values_a[0];
-        const min_b = asc_values_b[0];
-
-        const max_a = asc_values_a[asc_values_a.len - 1];
-        const max_b = asc_values_b[asc_values_a.len - 1];
+        const util_a = EnumUtilNamespace(A);
+        const util_b = EnumUtilNamespace(B);
+        const TagCombined = std.meta.Int(.unsigned, util_a.bits + util_b.bits);
 
         fn assertValidCombo() void {
-            if (comptime values_a.len == 0 or values_b.len == 0) {
+            if (comptime util_a.values.len == 0 or util_b.values.len == 0) {
                 @compileError("Cannot combine enums with zero members.");
             }
         }
 
-        fn unsignedA(a: A) UnsignedA {
-            assertValidCombo();
-            return @bitCast(UnsignedA, @enumToInt(a));
-        }
+        const lut: [util_a.values.len * util_b.values.len]TagCombined = lut: {
+            var result: [util_a.values.len * util_b.values.len]TagCombined = undefined;
 
-        fn unsignedB(b: B) UnsignedB {
-            assertValidCombo();
-            return @bitCast(UnsignedB, @enumToInt(b));
-        }
+            for (util_b.values) |b| {
+                const b_index = util_b.ascIndex(b);
+                for (util_a.values) |a| {
+                    const a_index = util_a.ascIndex(a);
+                    const combined_index = a_index + (b_index * util_a.info.fields.len);
+                    result[combined_index] = combined_index;
+                }
+            }
 
-        const Bits = packed struct { a: TagA, b: TagB };
+            break :lut result;
+        };
 
         fn tagCombined(a: A, b: B) TagCombined {
             assertValidCombo();
-            return @bitCast(TagCombined, Bits{
-                .a = @enumToInt(a) - @enumToInt(min_a),
-                .b = @enumToInt(b) - @enumToInt(min_b),
-            });
+            const a_index = util_a.ascIndex(a);
+            const b_index = util_b.ascIndex(b);
+            return lut[a_index + (b_index * util_a.values.len)];
         }
 
-        fn extractTagA(combined: TagCombined) TagA {
+        fn extractTagA(combined: TagCombined) util_a.Tag {
             assertValidCombo();
-            return @bitCast(Bits, combined).a + @enumToInt(min_a);
+            return @intCast(util_a.Tag, combined % util_a.values.len);
         }
 
-        fn extractTagB(combined: TagCombined) TagB {
+        fn extractTagB(combined: TagCombined) util_b.Tag {
             assertValidCombo();
-            return @bitCast(Bits, combined).b + @enumToInt(min_b);
+            return @intCast(util_b.Tag, @divTrunc(combined, util_a.values.len));
         }
     };
 }
@@ -217,8 +206,8 @@ test "combineEnums" {
                 const actual_d = getDir(combined);
                 const actual_r = getRot(combined);
 
-                try std.testing.expectEqual(expected_r, actual_r);
                 try std.testing.expectEqual(expected_d, actual_d);
+                try std.testing.expectEqual(expected_r, actual_r);
 
                 try std.testing.expectEqual(combineDirRot(expected_d, expected_r), combined);
                 try std.testing.expectEqual(combined, @call(.{}, combineDirRot, getBoth(combined)));
